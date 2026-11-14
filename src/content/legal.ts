@@ -388,7 +388,7 @@ export const PRIVACY_POLICY: LegalDocument = {
             '**Transport Suppliers:** We share relevant booking details (name, pickup/drop-off locations, flight information, contact number) with the licensed transport supplier fulfilling your journey.',
             '**Payment Processors:** Payment data is shared with Stripe for secure transaction processing.',
             '**Customer Support Tools:** We may use third-party platforms (e.g., Tawk.to) to manage customer communications.',
-            '**Analytics Providers:** We use analytics services (e.g., Google Analytics) to understand how visitors use our website.',
+            '**Analytics Providers:** We do not currently use a third-party analytics service. If we introduce one, we will update this policy before it is enabled.',
             '**Legal Requirements:** We may disclose your information if required to do so by law, regulation, legal process, or governmental request.',
           ],
         },
@@ -536,7 +536,7 @@ export const PRIVACY_STATEMENT: LegalDocument = {
             '**Transport Suppliers:** Licensed operators who fulfil your journey receive necessary booking details.',
             '**Stripe:** Our payment processor handles all transaction data securely.',
             '**Tawk.to:** We use Tawk.to for live chat and customer support communications. Tawk.to may process your name, email, and conversation history to provide support services.',
-            '**Analytics Providers:** We use analytics tools to understand website usage patterns and improve our services.',
+            '**Analytics Providers:** We do not currently share your data with a third-party analytics service.',
             '**Legal Authorities:** We may disclose data when required by law or to protect our legal rights.',
           ],
         },
@@ -631,7 +631,7 @@ export const COOKIE_POLICY: LegalDocument = {
         { type: 'h3', text: 'Performance / Analytics Cookies' },
         {
           type: 'p',
-          text: 'These cookies collect information about how visitors use our website, such as which pages are visited most often, how long users spend on each page, and whether they encounter any errors. All information collected by these cookies is aggregated and anonymous. We use this data to improve the performance and usability of our website. We may use services such as Google Analytics for this purpose.',
+          text: 'Analytics cookies collect information about how visitors use a website, such as which pages are visited most often, how long users spend on each page, and whether they encounter any errors. Any information collected this way is aggregated and anonymous. **We do not currently set analytics cookies.** If we introduce an analytics provider, we will name it here before it is enabled.',
         },
         { type: 'h3', text: 'Targeting / Advertising Cookies' },
         {
@@ -675,7 +675,7 @@ export const COOKIE_POLICY: LegalDocument = {
           type: 'ul',
           items: [
             "**Browser Settings:** Most web browsers allow you to manage cookies through their settings. You can typically set your browser to block or delete cookies, or to alert you when a cookie is being set. Please refer to your browser's help section for instructions on how to manage cookies.",
-            '**Opt-Out Links:** Some third-party services provide opt-out mechanisms. For example, you can opt out of Google Analytics by installing the [Google Analytics Opt-out Browser Add-on](https://tools.google.com/dlpage/gaoptout).',
+            '**Opt-Out Links:** Where a third-party service we use offers its own opt-out mechanism, we will link it here. The Tawk.to chat cookies described above can be removed through your browser settings.',
           ],
         },
         {
