@@ -154,7 +154,7 @@ export default function AdminDashboardPage() {
       </div>
 
       {stats.revenueByDay.length > 0 && (
-        <AdminCard title="Revenue — last 14 days" className="mb-8">
+        <AdminCard title="Revenue — last 30 days" className="mb-8">
           <div className="flex h-40 items-end gap-1.5">
             {stats.revenueByDay.map((day) => (
               <div key={day.day} className="group flex min-w-0 flex-1 flex-col items-center gap-2">
