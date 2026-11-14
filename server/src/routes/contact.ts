@@ -30,14 +30,14 @@ contactRouter.post(
   asyncHandler(async (req, res) => {
     const input = parseOrThrow(contactSchema, req.body);
 
-    const message = contactMessages.create({
+    const message = await contactMessages.create({
       name: input.name,
       email: input.email,
       subject: input.subject ?? null,
       message: input.message,
     });
 
-    notifications.create(
+    await notifications.create(
       'contact',
       `New contact message from ${input.name} - ${input.subject ?? 'No subject'}`,
       { contactMessageId: message.id },
@@ -78,10 +78,13 @@ contactRouter.post(
   contactLimiter,
   asyncHandler(async (req, res) => {
     const input = parseOrThrow(subscribeSchema, req.body);
-    const { subscriber, created } = subscribers.firstOrCreate(input.email, input.name ?? null);
+    const { subscriber, created } = await subscribers.firstOrCreate(
+      input.email,
+      input.name ?? null,
+    );
 
     if (created) {
-      notifications.create('subscriber', `New subscriber: ${subscriber.email}`, {
+      await notifications.create('subscriber', `New subscriber: ${subscriber.email}`, {
         email: subscriber.email,
       });
     }

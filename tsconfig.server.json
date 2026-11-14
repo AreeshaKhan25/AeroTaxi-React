@@ -18,5 +18,5 @@
     "isolatedModules": true,
     "moduleDetection": "force"
   },
-  "include": ["server/src"]
+  "include": ["server/src", "api"]
 }

@@ -70,7 +70,7 @@ bookingsRouter.post(
   asyncHandler(async (req, res) => {
     const input = parseOrThrow(createBookingSchema, req.body);
 
-    const vehicle = vehicles.find(input.vehicleId);
+    const vehicle = await vehicles.find(input.vehicleId);
     if (!vehicle) throw HttpError.unprocessable('That vehicle is no longer available.');
 
     if (input.passengers > vehicle.passengers) {
@@ -80,7 +80,7 @@ bookingsRouter.post(
     }
 
     const passengerName = `${input.firstName} ${input.lastName}`.trim();
-    const booking = bookings.create({
+    const booking = await bookings.create({
       fromLocation: input.fromLocation,
       toLocation: input.toLocation,
       departDate: input.departDate,
@@ -102,9 +102,11 @@ bookingsRouter.post(
     });
 
     if (input.agreePromotions) {
-      const { created } = subscribers.firstOrCreate(input.email, passengerName);
+      const { created } = await subscribers.firstOrCreate(input.email, passengerName);
       if (created) {
-        notifications.create('subscriber', `New subscriber: ${input.email}`, { email: input.email });
+        await notifications.create('subscriber', `New subscriber: ${input.email}`, {
+          email: input.email,
+        });
       }
     }
 
@@ -122,7 +124,7 @@ bookingsRouter.get(
     }
 
     const reference = raw.toUpperCase();
-    const booking = bookings.findByReference(reference) ?? null;
+    const booking = (await bookings.findByReference(reference)) ?? null;
     res.json({ reference, booking });
   }),
 );
@@ -131,7 +133,7 @@ bookingsRouter.get(
   '/:reference',
   asyncHandler(async (req, res) => {
     const reference = parseOrThrow(referenceParam, req.params.reference);
-    const booking = bookings.findByReference(reference);
+    const booking = await bookings.findByReference(reference);
     if (!booking) throw HttpError.notFound('Booking not found');
     res.json(booking);
   }),
@@ -146,7 +148,7 @@ bookingsRouter.post(
   '/:reference/payment-intent',
   asyncHandler(async (req, res) => {
     const reference = parseOrThrow(referenceParam, req.params.reference);
-    const booking = bookings.findByReference(reference);
+    const booking = await bookings.findByReference(reference);
     if (!booking) throw HttpError.notFound('Booking not found');
 
     if (booking.paymentStatus === 'paid') {
@@ -194,7 +196,7 @@ bookingsRouter.post(
       receipt_email: booking.email ?? undefined,
     });
 
-    bookings.update(booking.id, {
+    await bookings.update(booking.id, {
       fromLocation: booking.fromLocation,
       toLocation: booking.toLocation,
       departDate: booking.departDate,
@@ -217,7 +219,7 @@ bookingsRouter.post(
 );
 
 async function notifyBookingConfirmed(booking: BookingDto): Promise<void> {
-  notifications.create(
+  await notifications.create(
     'booking',
     `New booking ${booking.reference} from ${booking.passengerName ?? 'a customer'}`,
     { bookingId: booking.id, reference: booking.reference },
@@ -247,7 +249,7 @@ bookingsRouter.post(
   '/:reference/confirm',
   asyncHandler(async (req, res) => {
     const reference = parseOrThrow(referenceParam, req.params.reference);
-    const booking = bookings.findByReference(reference);
+    const booking = await bookings.findByReference(reference);
     if (!booking) throw HttpError.notFound('Booking not found');
 
     if (booking.paymentStatus === 'paid') {
@@ -284,7 +286,7 @@ bookingsRouter.post(
       confirmedPaymentId = intent.id;
     }
 
-    const updated = bookings.markPaid(booking.id, confirmedPaymentId);
+    const updated = await bookings.markPaid(booking.id, confirmedPaymentId);
     if (!updated) throw HttpError.serverError('Booking could not be confirmed');
 
     await notifyBookingConfirmed(updated);

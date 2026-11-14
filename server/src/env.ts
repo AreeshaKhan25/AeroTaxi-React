@@ -34,10 +34,18 @@ export const env = {
   appUrl: (process.env.APP_URL ?? 'http://localhost:5173').replace(/\/+$/, ''),
   corsOrigins: list(process.env.CORS_ORIGIN, ['http://localhost:5173', 'http://127.0.0.1:5173']),
 
-  databaseFile: path.resolve(
-    PROJECT_ROOT,
-    process.env.DATABASE_FILE ?? 'server/data/aerotaxi.sqlite',
-  ),
+  /* Postgres connection string. Vercel injects DATABASE_URL for its Neon
+     integration; POSTGRES_URL is accepted as an alias. */
+  databaseUrl:
+    process.env.DATABASE_URL ??
+    process.env.POSTGRES_URL ??
+    'postgresql://postgres:postgres@localhost:5432/aerotaxi',
+
+  /* Serverless instances should hold one connection each; a long-lived
+     server can keep a small pool. */
+  databasePoolMax: int(process.env.DATABASE_POOL_MAX, process.env.VERCEL ? 1 : 5),
+
+  isServerless: Boolean(process.env.VERCEL),
 
   auth: {
     jwtSecret: process.env.JWT_SECRET ?? 'aerotaxi-development-secret-change-me',

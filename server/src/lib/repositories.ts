@@ -1,4 +1,4 @@
-import { db, nowIso } from './db.js';
+import { nowIso, one, query, run } from './db.js';
 import {
   toAirport,
   toBooking,
@@ -37,16 +37,17 @@ import type {
 const REFERENCE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 /** `ATH-XXXXXXXX`, matching the original Laravel reference format. */
-export function generateReference(): string {
+export async function generateReference(): Promise<string> {
   for (let attempt = 0; attempt < 12; attempt += 1) {
     let suffix = '';
     for (let i = 0; i < 8; i += 1) {
       suffix += REFERENCE_ALPHABET[Math.floor(Math.random() * REFERENCE_ALPHABET.length)];
     }
     const reference = `ATH-${suffix}`;
-    const existing = db
-      .prepare('SELECT 1 AS hit FROM bookings WHERE reference = ?')
-      .get(reference) as { hit: number } | undefined;
+    const existing = await one<{ hit: number }>(
+      'SELECT 1 AS hit FROM bookings WHERE reference = ?',
+      [reference],
+    );
     if (!existing) return reference;
   }
   return `ATH-${Date.now().toString(36).toUpperCase().slice(-8)}`;
@@ -55,32 +56,31 @@ export function generateReference(): string {
 /* -------------------------------------------------------------- airports */
 
 export const airports = {
-  all(): AirportDto[] {
-    const rows = db
-      .prepare('SELECT * FROM airports ORDER BY sort_order ASC')
-      .all() as AirportRow[];
+  async all(): Promise<AirportDto[]> {
+    const rows = await query<AirportRow>('SELECT * FROM airports ORDER BY sort_order ASC');
     return rows.map(toAirport);
   },
 
-  search(query: string, limit = 10): AirportDto[] {
-    const trimmed = query.trim();
+  async search(search: string, limit = 10): Promise<AirportDto[]> {
+    const trimmed = search.trim();
     if (!trimmed) {
-      const rows = db
-        .prepare('SELECT * FROM airports ORDER BY sort_order ASC LIMIT ?')
-        .all(limit) as AirportRow[];
+      const rows = await query<AirportRow>(
+        'SELECT * FROM airports ORDER BY sort_order ASC LIMIT ?',
+        [limit],
+      );
       return rows.map(toAirport);
     }
+
     const like = `%${trimmed}%`;
-    const rows = db
-      .prepare(
-        `SELECT * FROM airports
-         WHERE name LIKE ? COLLATE NOCASE
-            OR code LIKE ? COLLATE NOCASE
-            OR city LIKE ? COLLATE NOCASE
-         ORDER BY sort_order ASC
-         LIMIT ?`,
-      )
-      .all(like, like, like, limit) as AirportRow[];
+    const rows = await query<AirportRow>(
+      `SELECT * FROM airports
+        WHERE name ILIKE ?
+           OR code ILIKE ?
+           OR city ILIKE ?
+        ORDER BY sort_order ASC
+        LIMIT ?`,
+      [like, like, like, limit],
+    );
     return rows.map(toAirport);
   },
 };
@@ -88,28 +88,38 @@ export const airports = {
 /* -------------------------------------------------------------- vehicles */
 
 export const vehicles = {
-  all(): VehicleDto[] {
-    const rows = db
-      .prepare('SELECT * FROM vehicles ORDER BY sort_order ASC')
-      .all() as VehicleRow[];
+  async all(): Promise<VehicleDto[]> {
+    const rows = await query<VehicleRow>('SELECT * FROM vehicles ORDER BY sort_order ASC');
     return rows.map(toVehicle);
   },
 
-  findRow(id: number): VehicleRow | undefined {
-    return db.prepare('SELECT * FROM vehicles WHERE id = ?').get(id) as VehicleRow | undefined;
+  findRow(id: number): Promise<VehicleRow | undefined> {
+    return one<VehicleRow>('SELECT * FROM vehicles WHERE id = ?', [id]);
   },
 
-  find(id: number): VehicleDto | undefined {
-    const row = vehicles.findRow(id);
+  async find(id: number): Promise<VehicleDto | undefined> {
+    const row = await vehicles.findRow(id);
     return row ? toVehicle(row) : undefined;
+  },
+
+  /** Vehicles with the number of bookings attached, for the admin fleet page. */
+  async withBookingCounts(): Promise<(VehicleDto & { bookingCount: number })[]> {
+    const rows = await query<VehicleRow & { booking_count: number }>(
+      `SELECT v.*, COUNT(b.id) AS booking_count
+         FROM vehicles v
+         LEFT JOIN bookings b ON b.vehicle_id = v.id
+        GROUP BY v.id
+        ORDER BY v.sort_order ASC`,
+    );
+    return rows.map((row) => ({ ...toVehicle(row), bookingCount: Number(row.booking_count) }));
   },
 };
 
 /* ------------------------------------------------------------------ faqs */
 
 export const faqs = {
-  all(): FaqDto[] {
-    const rows = db.prepare('SELECT * FROM faqs ORDER BY sort_order ASC').all() as FaqRow[];
+  async all(): Promise<FaqDto[]> {
+    const rows = await query<FaqRow>('SELECT * FROM faqs ORDER BY sort_order ASC');
     return rows.map(toFaq);
   },
 };
@@ -155,29 +165,36 @@ export interface UpdateBookingInput {
   totalPrice: number;
 }
 
-const bookingWithVehicle = (row: BookingRow): BookingDto =>
-  toBooking(row, vehicles.findRow(row.vehicle_id) ?? null);
+/** A booking row with its vehicle joined in as JSON, avoiding an N+1 query. */
+type JoinedBookingRow = BookingRow & { vehicle: VehicleRow | null };
+
+const SELECT_BOOKING = `
+  SELECT b.*, to_jsonb(v) AS vehicle
+    FROM bookings b
+    LEFT JOIN vehicles v ON v.id = b.vehicle_id
+`;
+
+const mapJoined = (row: JoinedBookingRow): BookingDto => toBooking(row, row.vehicle);
 
 export const bookings = {
-  create(input: CreateBookingInput): BookingDto {
-    const reference = generateReference();
+  async create(input: CreateBookingInput): Promise<BookingDto> {
+    const reference = await generateReference();
     const timestamp = nowIso();
 
-    const result = db
-      .prepare(
-        `INSERT INTO bookings (
-            reference, from_location, to_location, depart_date, depart_time, vehicle_id,
-            passenger_name, email, phone, country_code, flight_number, note_to_driver,
-            passengers, suitcases, hand_luggage, extras, distance, duration,
-            status, payment_status, total_price, created_at, updated_at
-         ) VALUES (
-            @reference, @fromLocation, @toLocation, @departDate, @departTime, @vehicleId,
-            @passengerName, @email, @phone, @countryCode, @flightNumber, @noteToDriver,
-            @passengers, @suitcases, @handLuggage, @extras, @distance, @duration,
-            'pending', 'unpaid', @totalPrice, @timestamp, @timestamp
-         )`,
-      )
-      .run({
+    const created = await one<{ id: number }>(
+      `INSERT INTO bookings (
+          reference, from_location, to_location, depart_date, depart_time, vehicle_id,
+          passenger_name, email, phone, country_code, flight_number, note_to_driver,
+          passengers, suitcases, hand_luggage, extras, distance, duration,
+          status, payment_status, total_price, created_at, updated_at
+       ) VALUES (
+          @reference, @fromLocation, @toLocation, @departDate, @departTime, @vehicleId,
+          @passengerName, @email, @phone, @countryCode, @flightNumber, @noteToDriver,
+          @passengers, @suitcases, @handLuggage, @extras, @distance, @duration,
+          'pending', 'unpaid', @totalPrice, @timestamp, @timestamp
+       )
+       RETURNING id`,
+      {
         reference,
         fromLocation: input.fromLocation,
         toLocation: input.toLocation,
@@ -198,54 +215,53 @@ export const bookings = {
         duration: input.duration,
         totalPrice: input.totalPrice,
         timestamp,
-      });
+      },
+    );
 
-    const created = bookings.findById(Number(result.lastInsertRowid));
     if (!created) throw new Error('Booking could not be created');
-    return created;
+
+    const booking = await bookings.findById(created.id);
+    if (!booking) throw new Error('Booking could not be created');
+    return booking;
   },
 
-  findById(id: number): BookingDto | undefined {
-    const row = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id) as
-      | BookingRow
-      | undefined;
-    return row ? bookingWithVehicle(row) : undefined;
+  async findById(id: number): Promise<BookingDto | undefined> {
+    const row = await one<JoinedBookingRow>(`${SELECT_BOOKING} WHERE b.id = ?`, [id]);
+    return row ? mapJoined(row) : undefined;
   },
 
-  findByReference(reference: string): BookingDto | undefined {
-    const row = db
-      .prepare('SELECT * FROM bookings WHERE reference = ? COLLATE NOCASE')
-      .get(reference) as BookingRow | undefined;
-    return row ? bookingWithVehicle(row) : undefined;
+  async findByReference(reference: string): Promise<BookingDto | undefined> {
+    const row = await one<JoinedBookingRow>(
+      `${SELECT_BOOKING} WHERE upper(b.reference) = upper(?)`,
+      [reference],
+    );
+    return row ? mapJoined(row) : undefined;
   },
 
-  all(): BookingDto[] {
-    const rows = db
-      .prepare('SELECT * FROM bookings ORDER BY datetime(created_at) DESC')
-      .all() as BookingRow[];
-    return rows.map(bookingWithVehicle);
+  async all(): Promise<BookingDto[]> {
+    const rows = await query<JoinedBookingRow>(`${SELECT_BOOKING} ORDER BY b.created_at DESC`);
+    return rows.map(mapJoined);
   },
 
-  unpaid(): BookingDto[] {
-    const rows = db
-      .prepare(
-        `SELECT * FROM bookings
-         WHERE payment_status IS NULL OR payment_status != 'paid'
-         ORDER BY datetime(created_at) DESC`,
-      )
-      .all() as BookingRow[];
-    return rows.map(bookingWithVehicle);
+  async unpaid(): Promise<BookingDto[]> {
+    const rows = await query<JoinedBookingRow>(
+      `${SELECT_BOOKING}
+        WHERE b.payment_status IS NULL OR b.payment_status <> 'paid'
+        ORDER BY b.created_at DESC`,
+    );
+    return rows.map(mapJoined);
   },
 
-  recent(limit = 10): BookingDto[] {
-    const rows = db
-      .prepare('SELECT * FROM bookings ORDER BY datetime(created_at) DESC LIMIT ?')
-      .all(limit) as BookingRow[];
-    return rows.map(bookingWithVehicle);
+  async recent(limit = 10): Promise<BookingDto[]> {
+    const rows = await query<JoinedBookingRow>(
+      `${SELECT_BOOKING} ORDER BY b.created_at DESC LIMIT ?`,
+      [limit],
+    );
+    return rows.map(mapJoined);
   },
 
-  update(id: number, input: UpdateBookingInput): BookingDto | undefined {
-    db.prepare(
+  async update(id: number, input: UpdateBookingInput): Promise<BookingDto | undefined> {
+    await run(
       `UPDATE bookings SET
           from_location = @fromLocation,
           to_location = @toLocation,
@@ -263,72 +279,73 @@ export const bookings = {
           payment_id = @paymentId,
           total_price = @totalPrice,
           updated_at = @timestamp
-       WHERE id = @id`,
-    ).run({ ...input, id, timestamp: nowIso() });
+        WHERE id = @id`,
+      { ...input, id, timestamp: nowIso() },
+    );
 
     return bookings.findById(id);
   },
 
-  markPaid(id: number, paymentId: string | null): BookingDto | undefined {
-    db.prepare(
+  async markPaid(id: number, paymentId: string | null): Promise<BookingDto | undefined> {
+    await run(
       `UPDATE bookings
-         SET status = 'confirmed', payment_status = 'paid',
-             payment_id = COALESCE(@paymentId, payment_id), updated_at = @timestamp
-       WHERE id = @id`,
-    ).run({ id, paymentId, timestamp: nowIso() });
+          SET status = 'confirmed',
+              payment_status = 'paid',
+              payment_id = COALESCE(@paymentId, payment_id),
+              updated_at = @timestamp
+        WHERE id = @id`,
+      { id, paymentId, timestamp: nowIso() },
+    );
 
     return bookings.findById(id);
   },
 
-  stats() {
-    const total = (db.prepare('SELECT COUNT(*) AS c FROM bookings').get() as { c: number }).c;
-    const revenue = (
-      db
-        .prepare(`SELECT COALESCE(SUM(total_price), 0) AS s FROM bookings WHERE payment_status = 'paid'`)
-        .get() as { s: number }
-    ).s;
-    const today = (
-      db
-        .prepare(`SELECT COUNT(*) AS c FROM bookings WHERE date(created_at) = date('now')`)
-        .get() as { c: number }
-    ).c;
-    const pending = (
-      db.prepare(`SELECT COUNT(*) AS c FROM bookings WHERE status = 'pending'`).get() as {
-        c: number;
-      }
-    ).c;
+  async stats() {
+    const [totals, byStatus, byVehicle, revenueByDay] = await Promise.all([
+      one<{
+        total: number;
+        revenue: number;
+        today: number;
+        pending: number;
+      }>(
+        `SELECT COUNT(*)                                                               AS total,
+                COALESCE(SUM(CASE WHEN payment_status = 'paid' THEN total_price END), 0) AS revenue,
+                COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE)                AS today,
+                COUNT(*) FILTER (WHERE status = 'pending')                             AS pending
+           FROM bookings`,
+      ),
 
-    const byStatus = db
-      .prepare('SELECT status, COUNT(*) AS count FROM bookings GROUP BY status ORDER BY count DESC')
-      .all() as { status: string; count: number }[];
+      query<{ status: string; count: number }>(
+        `SELECT status, COUNT(*) AS count
+           FROM bookings
+          GROUP BY status
+          ORDER BY count DESC`,
+      ),
 
-    const byVehicle = db
-      .prepare(
+      query<{ name: string; count: number }>(
         `SELECT COALESCE(v.name, 'N/A') AS name, COUNT(*) AS count
            FROM bookings b
            LEFT JOIN vehicles v ON v.id = b.vehicle_id
-          GROUP BY name
+          GROUP BY 1
           ORDER BY count DESC`,
-      )
-      .all() as { name: string; count: number }[];
+      ),
 
-    const revenueByDay = db
-      .prepare(
-        `SELECT date(created_at) AS day,
+      query<{ day: string; bookings: number; revenue: number }>(
+        `SELECT to_char(created_at, 'YYYY-MM-DD') AS day,
                 COUNT(*) AS bookings,
                 COALESCE(SUM(CASE WHEN payment_status = 'paid' THEN total_price ELSE 0 END), 0) AS revenue
            FROM bookings
-          WHERE date(created_at) >= date('now', '-29 days')
-          GROUP BY day
-          ORDER BY day ASC`,
-      )
-      .all() as { day: string; bookings: number; revenue: number }[];
+          WHERE created_at >= CURRENT_DATE - INTERVAL '29 days'
+          GROUP BY 1
+          ORDER BY 1 ASC`,
+      ),
+    ]);
 
     return {
-      totalBookings: total,
-      totalRevenue: Math.round(revenue * 100) / 100,
-      todayBookings: today,
-      pendingBookings: pending,
+      totalBookings: Number(totals?.total ?? 0),
+      totalRevenue: Math.round(Number(totals?.revenue ?? 0) * 100) / 100,
+      todayBookings: Number(totals?.today ?? 0),
+      pendingBookings: Number(totals?.pending ?? 0),
       byStatus,
       byVehicle,
       revenueByDay,
@@ -339,139 +356,131 @@ export const bookings = {
 /* ------------------------------------------------------- contact messages */
 
 export const contactMessages = {
-  create(input: {
+  async create(input: {
     name: string;
     email: string;
     subject: string | null;
     message: string;
-  }): ContactMessageDto {
+  }): Promise<ContactMessageDto> {
     const timestamp = nowIso();
-    const result = db
-      .prepare(
-        `INSERT INTO contact_messages (name, email, subject, message, read, created_at, updated_at)
-         VALUES (@name, @email, @subject, @message, 0, @timestamp, @timestamp)`,
-      )
-      .run({ ...input, timestamp });
-
-    const row = db
-      .prepare('SELECT * FROM contact_messages WHERE id = ?')
-      .get(Number(result.lastInsertRowid)) as ContactMessageRow;
+    const row = await one<ContactMessageRow>(
+      `INSERT INTO contact_messages (name, email, subject, message, read, created_at, updated_at)
+       VALUES (@name, @email, @subject, @message, false, @timestamp, @timestamp)
+       RETURNING *`,
+      { ...input, timestamp },
+    );
+    if (!row) throw new Error('Message could not be saved');
     return toContactMessage(row);
   },
 
-  all(): ContactMessageDto[] {
-    const rows = db
-      .prepare('SELECT * FROM contact_messages ORDER BY datetime(created_at) DESC')
-      .all() as ContactMessageRow[];
+  async all(): Promise<ContactMessageDto[]> {
+    const rows = await query<ContactMessageRow>(
+      'SELECT * FROM contact_messages ORDER BY created_at DESC',
+    );
     return rows.map(toContactMessage);
   },
 
-  markRead(id: number, read = true): ContactMessageDto | undefined {
-    db.prepare('UPDATE contact_messages SET read = ?, updated_at = ? WHERE id = ?').run(
-      read ? 1 : 0,
-      nowIso(),
-      id,
+  async markRead(id: number, read = true): Promise<ContactMessageDto | undefined> {
+    const row = await one<ContactMessageRow>(
+      'UPDATE contact_messages SET read = ?, updated_at = ? WHERE id = ? RETURNING *',
+      [read, nowIso(), id],
     );
-    const row = db.prepare('SELECT * FROM contact_messages WHERE id = ?').get(id) as
-      | ContactMessageRow
-      | undefined;
     return row ? toContactMessage(row) : undefined;
   },
 
-  unreadCount(): number {
-    return (
-      db.prepare('SELECT COUNT(*) AS c FROM contact_messages WHERE read = 0').get() as {
-        c: number;
-      }
-    ).c;
+  async unreadCount(): Promise<number> {
+    const row = await one<{ c: number }>(
+      'SELECT COUNT(*) AS c FROM contact_messages WHERE read = false',
+    );
+    return Number(row?.c ?? 0);
   },
 };
 
 /* ----------------------------------------------------------- subscribers */
 
 export const subscribers = {
-  all(): SubscriberDto[] {
-    const rows = db
-      .prepare('SELECT * FROM subscribers ORDER BY datetime(created_at) DESC')
-      .all() as SubscriberRow[];
+  async all(): Promise<SubscriberDto[]> {
+    const rows = await query<SubscriberRow>('SELECT * FROM subscribers ORDER BY created_at DESC');
     return rows.map(toSubscriber);
   },
 
-  activeCount(): number {
-    return (
-      db.prepare('SELECT COUNT(*) AS c FROM subscribers WHERE active = 1').get() as { c: number }
-    ).c;
+  async activeCount(): Promise<number> {
+    const row = await one<{ c: number }>(
+      'SELECT COUNT(*) AS c FROM subscribers WHERE active = true',
+    );
+    return Number(row?.c ?? 0);
   },
 
   /** Returns `{ subscriber, created }` so callers can log a notification once. */
-  firstOrCreate(email: string, name: string | null): { subscriber: SubscriberDto; created: boolean } {
-    const existing = db
-      .prepare('SELECT * FROM subscribers WHERE email = ? COLLATE NOCASE')
-      .get(email) as SubscriberRow | undefined;
+  async firstOrCreate(
+    email: string,
+    name: string | null,
+  ): Promise<{ subscriber: SubscriberDto; created: boolean }> {
+    const existing = await one<SubscriberRow>(
+      'SELECT * FROM subscribers WHERE lower(email) = lower(?)',
+      [email],
+    );
 
     if (existing) {
       return { subscriber: toSubscriber(existing), created: false };
     }
 
     const timestamp = nowIso();
-    const result = db
-      .prepare(
-        `INSERT INTO subscribers (email, name, active, created_at, updated_at)
-         VALUES (?, ?, 1, ?, ?)`,
-      )
-      .run(email, name, timestamp, timestamp);
+    const row = await one<SubscriberRow>(
+      `INSERT INTO subscribers (email, name, active, created_at, updated_at)
+       VALUES (?, ?, true, ?, ?)
+       ON CONFLICT (email) DO UPDATE SET updated_at = EXCLUDED.updated_at
+       RETURNING *, (xmax = 0) AS inserted`,
+      [email, name, timestamp, timestamp],
+    );
 
-    const row = db
-      .prepare('SELECT * FROM subscribers WHERE id = ?')
-      .get(Number(result.lastInsertRowid)) as SubscriberRow;
-    return { subscriber: toSubscriber(row), created: true };
+    if (!row) throw new Error('Subscriber could not be saved');
+
+    const created = (row as SubscriberRow & { inserted?: boolean }).inserted !== false;
+    return { subscriber: toSubscriber(row), created };
   },
 
-  setActive(id: number, active: boolean): SubscriberDto | undefined {
-    db.prepare('UPDATE subscribers SET active = ?, updated_at = ? WHERE id = ?').run(
-      active ? 1 : 0,
-      nowIso(),
-      id,
+  async setActive(id: number, active: boolean): Promise<SubscriberDto | undefined> {
+    const row = await one<SubscriberRow>(
+      'UPDATE subscribers SET active = ?, updated_at = ? WHERE id = ? RETURNING *',
+      [active, nowIso(), id],
     );
-    const row = db.prepare('SELECT * FROM subscribers WHERE id = ?').get(id) as
-      | SubscriberRow
-      | undefined;
     return row ? toSubscriber(row) : undefined;
   },
 
-  activeEmails(): { email: string; name: string | null }[] {
-    return db
-      .prepare('SELECT email, name FROM subscribers WHERE active = 1')
-      .all() as { email: string; name: string | null }[];
+  activeEmails(): Promise<{ email: string; name: string | null }[]> {
+    return query<{ email: string; name: string | null }>(
+      'SELECT email, name FROM subscribers WHERE active = true',
+    );
   },
 };
 
 /* ---------------------------------------------------------------- admins */
 
 export const admins = {
-  findByEmail(email: string): AdminRow | undefined {
-    return db.prepare('SELECT * FROM admins WHERE email = ? COLLATE NOCASE').get(email) as
-      | AdminRow
-      | undefined;
+  findByEmail(email: string): Promise<AdminRow | undefined> {
+    return one<AdminRow>('SELECT * FROM admins WHERE lower(email) = lower(?)', [email]);
   },
 
-  findById(id: number): AdminRow | undefined {
-    return db.prepare('SELECT * FROM admins WHERE id = ?').get(id) as AdminRow | undefined;
+  findById(id: number): Promise<AdminRow | undefined> {
+    return one<AdminRow>('SELECT * FROM admins WHERE id = ?', [id]);
   },
 
-  create(input: { name: string; email: string; passwordHash: string }): AdminRow {
+  async create(input: { name: string; email: string; passwordHash: string }): Promise<AdminRow> {
     const timestamp = nowIso();
-    const result = db
-      .prepare(
-        `INSERT INTO admins (name, email, password, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(input.name, input.email, input.passwordHash, timestamp, timestamp);
-    return admins.findById(Number(result.lastInsertRowid))!;
+    const row = await one<AdminRow>(
+      `INSERT INTO admins (name, email, password, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       RETURNING *`,
+      [input.name, input.email, input.passwordHash, timestamp, timestamp],
+    );
+    if (!row) throw new Error('Admin could not be created');
+    return row;
   },
 
-  count(): number {
-    return (db.prepare('SELECT COUNT(*) AS c FROM admins').get() as { c: number }).c;
+  async count(): Promise<number> {
+    const row = await one<{ c: number }>('SELECT COUNT(*) AS c FROM admins');
+    return Number(row?.c ?? 0);
   },
 };
 
@@ -480,71 +489,66 @@ export const admins = {
 export type NotificationType = 'booking' | 'contact' | 'subscriber' | 'system';
 
 export const notifications = {
-  create(type: NotificationType, message: string, data?: unknown): NotificationDto {
+  async create(type: NotificationType, message: string, data?: unknown): Promise<NotificationDto> {
     const timestamp = nowIso();
-    const result = db
-      .prepare(
-        `INSERT INTO admin_notifications (type, message, data, read, created_at, updated_at)
-         VALUES (?, ?, ?, 0, ?, ?)`,
-      )
-      .run(type, message, data === undefined ? null : JSON.stringify(data), timestamp, timestamp);
-
-    const row = db
-      .prepare('SELECT * FROM admin_notifications WHERE id = ?')
-      .get(Number(result.lastInsertRowid)) as NotificationRow;
+    const row = await one<NotificationRow>(
+      `INSERT INTO admin_notifications (type, message, data, read, created_at, updated_at)
+       VALUES (?, ?, ?, false, ?, ?)
+       RETURNING *`,
+      [type, message, data === undefined ? null : JSON.stringify(data), timestamp, timestamp],
+    );
+    if (!row) throw new Error('Notification could not be saved');
     return toNotification(row);
   },
 
-  recent(limit = 25): NotificationDto[] {
-    const rows = db
-      .prepare('SELECT * FROM admin_notifications ORDER BY datetime(created_at) DESC LIMIT ?')
-      .all(limit) as NotificationRow[];
+  async recent(limit = 25): Promise<NotificationDto[]> {
+    const rows = await query<NotificationRow>(
+      'SELECT * FROM admin_notifications ORDER BY created_at DESC LIMIT ?',
+      [limit],
+    );
     return rows.map(toNotification);
   },
 
-  unreadCount(): number {
-    return (
-      db.prepare('SELECT COUNT(*) AS c FROM admin_notifications WHERE read = 0').get() as {
-        c: number;
-      }
-    ).c;
+  async unreadCount(): Promise<number> {
+    const row = await one<{ c: number }>(
+      'SELECT COUNT(*) AS c FROM admin_notifications WHERE read = false',
+    );
+    return Number(row?.c ?? 0);
   },
 
-  markAllRead(): void {
-    db.prepare('UPDATE admin_notifications SET read = 1, updated_at = ? WHERE read = 0').run(
+  async markAllRead(): Promise<void> {
+    await run('UPDATE admin_notifications SET read = true, updated_at = ? WHERE read = false', [
       nowIso(),
-    );
+    ]);
   },
 };
 
 /* ------------------------------------------------------------ promotions */
 
 export const promotions = {
-  create(input: {
+  async create(input: {
     subject: string;
     message: string;
     recipientCount: number;
     sentCount: number;
     status: string;
-  }): PromotionDto {
+  }): Promise<PromotionDto> {
     const timestamp = nowIso();
-    const result = db
-      .prepare(
-        `INSERT INTO promotions (subject, message, recipient_count, sent_count, status, created_at, updated_at)
-         VALUES (@subject, @message, @recipientCount, @sentCount, @status, @timestamp, @timestamp)`,
-      )
-      .run({ ...input, timestamp });
-
-    const row = db
-      .prepare('SELECT * FROM promotions WHERE id = ?')
-      .get(Number(result.lastInsertRowid)) as PromotionRow;
+    const row = await one<PromotionRow>(
+      `INSERT INTO promotions (subject, message, recipient_count, sent_count, status, created_at, updated_at)
+       VALUES (@subject, @message, @recipientCount, @sentCount, @status, @timestamp, @timestamp)
+       RETURNING *`,
+      { ...input, timestamp },
+    );
+    if (!row) throw new Error('Promotion could not be saved');
     return toPromotion(row);
   },
 
-  recent(limit = 20): PromotionDto[] {
-    const rows = db
-      .prepare('SELECT * FROM promotions ORDER BY datetime(created_at) DESC LIMIT ?')
-      .all(limit) as PromotionRow[];
+  async recent(limit = 20): Promise<PromotionDto[]> {
+    const rows = await query<PromotionRow>(
+      'SELECT * FROM promotions ORDER BY created_at DESC LIMIT ?',
+      [limit],
+    );
     return rows.map(toPromotion);
   },
 };
@@ -552,28 +556,29 @@ export const promotions = {
 /* ----------------------------------------------------------------- zones */
 
 export const zones = {
-  all(): ZoneDto[] {
-    const rows = db.prepare('SELECT * FROM zones ORDER BY id ASC').all() as ZoneRow[];
+  async all(): Promise<ZoneDto[]> {
+    const rows = await query<ZoneRow>('SELECT * FROM zones ORDER BY id ASC');
     return rows.map(toZone);
   },
 
-  create(input: { name: string; colour: string; geometry: [number, number][] }): ZoneDto {
+  async create(input: {
+    name: string;
+    colour: string;
+    geometry: [number, number][];
+  }): Promise<ZoneDto> {
     const timestamp = nowIso();
-    const result = db
-      .prepare(
-        `INSERT INTO zones (name, colour, geometry, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(input.name, input.colour, JSON.stringify(input.geometry), timestamp, timestamp);
-
-    const row = db
-      .prepare('SELECT * FROM zones WHERE id = ?')
-      .get(Number(result.lastInsertRowid)) as ZoneRow;
+    const row = await one<ZoneRow>(
+      `INSERT INTO zones (name, colour, geometry, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       RETURNING *`,
+      [input.name, input.colour, JSON.stringify(input.geometry), timestamp, timestamp],
+    );
+    if (!row) throw new Error('Zone could not be saved');
     return toZone(row);
   },
 
-  remove(id: number): boolean {
-    const result = db.prepare('DELETE FROM zones WHERE id = ?').run(id);
-    return result.changes > 0;
+  async remove(id: number): Promise<boolean> {
+    const changes = await run('DELETE FROM zones WHERE id = ?', [id]);
+    return changes > 0;
   },
 };

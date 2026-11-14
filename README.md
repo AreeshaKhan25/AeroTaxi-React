@@ -1,25 +1,32 @@
 # AeroTAXI — React + TypeScript
 
 A full rebuild of the original Laravel/Blade AeroTAXI site as a modern React single-page
-application backed by a small Express + SQLite API. Every page, flow and admin screen from
+application backed by an Express + Postgres API. Every page, flow and admin screen from
 the original has been carried over — the booking funnel, live pricing, flight validation,
 Stripe checkout, confirmation emails, the legal pages and the whole admin panel — with the
 markup rewritten as typed React components and the Alpine.js behaviour replaced by hooks.
 
 ```
 src/        React front end (Vite, TypeScript, Tailwind)
-server/     Express API, SQLite storage, mailer, Stripe
+server/     Express API, Postgres data layer, mailer, Stripe
+api/        Vercel Function wrapper that serves the same Express app
 public/     Static assets copied from the original site
 ```
+
+It runs the same way in both places: one Express app, either as a long-lived Node process
+or as a single Vercel Function.
 
 ## Quick start
 
 ```bash
-npm install          # installs the web + API dependencies
-cp .env.example .env # optional: everything works without it
-npm run db:seed      # creates server/data/aerotaxi.sqlite with airports, fleet, FAQs, admin
-npm run dev          # Vite on :5173 and the API on :4000
+npm install            # installs the web + API dependencies
+cp .env.example .env   # set DATABASE_URL to your Postgres instance
+npm run db:seed        # creates the schema and seeds airports, fleet, FAQs, admin
+npm run dev            # Vite on :5173 and the API on :4000
 ```
+
+Any Postgres works — a local server, Docker (`docker run -e POSTGRES_PASSWORD=postgres -p
+5432:5432 postgres:17`), Neon, or Supabase. The connection string goes in `DATABASE_URL`.
 
 Then open <http://localhost:5173>. The admin panel is at
 <http://localhost:5173/admin> — the seeded account is `admin@aerotaxi.com` / `admin123`
@@ -44,9 +51,10 @@ Vite proxies `/api` to the API server, so the front end never needs an absolute 
 
 Nothing is required to run locally; each integration degrades gracefully.
 
-| Area       | Without configuration                                                     | With configuration                                        |
-| ---------- | ------------------------------------------------------------------------- | --------------------------------------------------------- |
-| **Stripe** | Checkout runs in **demo mode**: the payment step confirms the booking without charging a card. | `STRIPE_PUBLISHABLE_KEY` + `STRIPE_SECRET_KEY` switch the payment page to real Stripe Elements, and the server verifies the PaymentIntent before confirming. |
+| Area         | Without configuration                                                   | With configuration                                        |
+| ------------ | ----------------------------------------------------------------------- | --------------------------------------------------------- |
+| **Database** | Falls back to `postgresql://postgres:postgres@localhost:5432/aerotaxi`, so the API will not start unless something is listening there. | `DATABASE_URL` (or `POSTGRES_URL`) points at any Postgres. TLS is enabled automatically for anything that is not localhost. |
+| **Stripe**   | Checkout runs in **demo mode**: the payment step confirms the booking without charging a card. | `STRIPE_PUBLISHABLE_KEY` + `STRIPE_SECRET_KEY` switch the payment page to real Stripe Elements, and the server verifies the PaymentIntent before confirming. |
 | **Email**  | Confirmation, admin-notification and promotion emails are logged to the API console. | `MAIL_*` SMTP settings send them for real. Mail failures never break a booking. |
 | **Flights**| Flight numbers are validated against a built-in UK airline IATA directory. | `AVIATIONSTACK_API_KEY` adds live flight lookup, with the directory as the fallback. |
 
@@ -104,13 +112,44 @@ All endpoints are under `/api`. Public: `config`, `airports`, `vehicles`, `faqs`
 `promotions`, `notifications`, `zones`. Every request body is validated with Zod and
 failures come back as `422` with per-field messages, which the forms map onto their inputs.
 
+## Deploying to Vercel
+
+The whole app ships as one Vercel project: the Vite build is served from the CDN, and the
+Express API runs as a single function (`api/index.ts`), which `vercel.json` rewrites every
+`/api/*` request to. Client-side routes fall back to `index.html`.
+
+1. **Create the database.** In the Vercel dashboard, open the project's *Storage* tab and
+   create a Neon Postgres store. Vercel injects `DATABASE_URL` into every environment, so
+   the app needs no further database configuration.
+2. **Set the secrets.** Only one is required:
+
+   ```bash
+   vercel env add JWT_SECRET production   # paste a 48-byte random hex string
+   vercel env add APP_URL production      # https://your-deployment.vercel.app
+   ```
+
+   `STRIPE_*`, `MAIL_*` and `AVIATIONSTACK_API_KEY` are optional — without them checkout
+   runs in demo mode, email is logged, and flight lookup uses the offline airline list.
+   The seed account's password is **not** a deployment secret: it is only read by
+   `npm run db:seed`, so keep it in your local `.env` and out of the hosting environment.
+3. **Create the schema.** Point your local `.env` at the Neon connection string (copy it
+   from the Storage tab) and run `npm run db:seed` once. It creates the tables, loads the
+   airports, fleet and FAQs, and creates the admin account from `SEED_ADMIN_*`.
+4. **Deploy.** `vercel --prod`, or push to the connected Git branch.
+
+The function keeps one pooled connection per instance (`DATABASE_POOL_MAX` defaults to 1 on
+Vercel) and never runs migrations on a cold start, so scaling up does not stampede the
+database.
+
 ## Notes on the port
 
 - **No Alpine, no jQuery, no CDN Tailwind.** Tailwind is compiled, icons come from
   `lucide-react` instead of FontAwesome, and the brand palette, fonts, shadows and
   animations live in `tailwind.config.js`.
-- **Data lives in SQLite** instead of MySQL; the schema, the 12 airports, 7 vehicles and 5
-  FAQs match the original seeders exactly.
+- **Data lives in Postgres** instead of MySQL; the schema, the 12 airports, 7 vehicles and
+  5 FAQs match the original seeders exactly. The repositories are plain async SQL with a
+  small named-parameter helper — no ORM — and bookings join their vehicle in one query
+  rather than looking it up per row.
 - **Accessibility and robustness passes**: keyboard-navigable autocomplete and accordions,
   labelled controls, a skip link, focus-visible rings, loading skeletons, toasts for async
   results, and route-level code splitting.

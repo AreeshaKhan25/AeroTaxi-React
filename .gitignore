@@ -8,11 +8,11 @@ build/
 .env.local
 .env.*.local
 
-# SQLite database + write-ahead files
-server/data/*.sqlite
-server/data/*.sqlite-journal
-server/data/*.sqlite-shm
-server/data/*.sqlite-wal
+# Local database artefacts (the app now uses Postgres)
+server/data/
+
+# Vercel
+.vercel
 
 # Logs
 *.log

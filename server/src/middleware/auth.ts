@@ -26,9 +26,11 @@ interface TokenPayload {
 
 export function issueAdminCookie(res: Response, admin: AdminIdentity, remember: boolean): void {
   const days = remember ? env.auth.rememberDays : env.auth.sessionDays;
-  const token = jwt.sign({ sub: admin.id, email: admin.email } satisfies TokenPayload, env.auth.jwtSecret, {
-    expiresIn: `${days}d`,
-  });
+  const token = jwt.sign(
+    { sub: admin.id, email: admin.email } satisfies TokenPayload,
+    env.auth.jwtSecret,
+    { expiresIn: `${days}d` },
+  );
 
   res.cookie(env.auth.cookieName, token, {
     httpOnly: true,
@@ -40,11 +42,16 @@ export function issueAdminCookie(res: Response, admin: AdminIdentity, remember: 
 }
 
 export function clearAdminCookie(res: Response): void {
-  res.clearCookie(env.auth.cookieName, { path: '/' });
+  res.clearCookie(env.auth.cookieName, {
+    path: '/',
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: env.isProduction,
+  });
 }
 
 /** Resolves the signed-in admin, or `undefined` when the cookie is absent/stale. */
-export function resolveAdmin(req: Request): AdminIdentity | undefined {
+export async function resolveAdmin(req: Request): Promise<AdminIdentity | undefined> {
   const token = req.cookies?.[env.auth.cookieName];
   if (!token || typeof token !== 'string') return undefined;
 
@@ -52,7 +59,7 @@ export function resolveAdmin(req: Request): AdminIdentity | undefined {
     const payload = jwt.verify(token, env.auth.jwtSecret) as unknown as TokenPayload;
     if (typeof payload?.sub !== 'number') return undefined;
 
-    const row = admins.findById(payload.sub);
+    const row = await admins.findById(payload.sub);
     if (!row) return undefined;
     return { id: row.id, name: row.name, email: row.email };
   } catch {
@@ -61,16 +68,28 @@ export function resolveAdmin(req: Request): AdminIdentity | undefined {
 }
 
 export function attachAdmin(req: Request, _res: Response, next: NextFunction): void {
-  req.admin = resolveAdmin(req);
-  next();
+  void resolveAdmin(req)
+    .then((admin) => {
+      req.admin = admin;
+      next();
+    })
+    .catch(next);
 }
 
 export function requireAdmin(req: Request, _res: Response, next: NextFunction): void {
-  const admin = req.admin ?? resolveAdmin(req);
-  if (!admin) {
-    next(HttpError.unauthorized('Please sign in to continue.'));
+  if (req.admin) {
+    next();
     return;
   }
-  req.admin = admin;
-  next();
+
+  void resolveAdmin(req)
+    .then((admin) => {
+      if (!admin) {
+        next(HttpError.unauthorized('Please sign in to continue.'));
+        return;
+      }
+      req.admin = admin;
+      next();
+    })
+    .catch(next);
 }

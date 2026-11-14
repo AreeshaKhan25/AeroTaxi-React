@@ -40,7 +40,7 @@ adminRouter.post(
   loginLimiter,
   asyncHandler(async (req, res) => {
     const input = parseOrThrow(loginSchema, req.body);
-    const admin = admins.findByEmail(input.email);
+    const admin = await admins.findByEmail(input.email);
 
     const matches = admin ? await bcrypt.compare(input.password, admin.password) : false;
     if (!admin || !matches) {
@@ -73,38 +73,61 @@ adminRouter.use(requireAdmin);
 
 /* ----------------------------------------------------------- dashboard */
 
-adminRouter.get('/stats', (_req, res) => {
-  res.json({
-    ...bookings.stats(),
-    subscribers: subscribers.all(),
-    activeSubscribers: subscribers.activeCount(),
-    unreadMessages: contactMessages.unreadCount(),
-    recentBookings: bookings.recent(10),
-  });
-});
+adminRouter.get(
+  '/stats',
+  asyncHandler(async (_req, res) => {
+    const [stats, subscriberList, activeSubscribers, unreadMessages, recentBookings] =
+      await Promise.all([
+        bookings.stats(),
+        subscribers.all(),
+        subscribers.activeCount(),
+        contactMessages.unreadCount(),
+        bookings.recent(10),
+      ]);
 
-adminRouter.get('/summary', (_req, res) => {
-  res.json({
-    unreadNotifications: notifications.unreadCount(),
-    unreadMessages: contactMessages.unreadCount(),
-  });
-});
+    res.json({
+      ...stats,
+      subscribers: subscriberList,
+      activeSubscribers,
+      unreadMessages,
+      recentBookings,
+    });
+  }),
+);
+
+adminRouter.get(
+  '/summary',
+  asyncHandler(async (_req, res) => {
+    const [unreadNotifications, unreadMessages] = await Promise.all([
+      notifications.unreadCount(),
+      contactMessages.unreadCount(),
+    ]);
+
+    res.json({ unreadNotifications, unreadMessages });
+  }),
+);
 
 /* ------------------------------------------------------------ bookings */
 
-adminRouter.get('/bookings', (req, res) => {
-  const scope = req.query.scope === 'unpaid' ? 'unpaid' : 'all';
-  res.json(scope === 'unpaid' ? bookings.unpaid() : bookings.all());
-});
+adminRouter.get(
+  '/bookings',
+  asyncHandler(async (req, res) => {
+    const scope = req.query.scope === 'unpaid' ? 'unpaid' : 'all';
+    res.json(scope === 'unpaid' ? await bookings.unpaid() : await bookings.all());
+  }),
+);
 
-adminRouter.get('/bookings/:id', (req, res) => {
-  const booking = bookings.findById(Number(req.params.id));
-  if (!booking) {
-    res.status(404).json({ message: 'Booking not found' });
-    return;
-  }
-  res.json(booking);
-});
+adminRouter.get(
+  '/bookings/:id',
+  asyncHandler(async (req, res) => {
+    const booking = await bookings.findById(Number(req.params.id));
+    if (!booking) {
+      res.status(404).json({ message: 'Booking not found' });
+      return;
+    }
+    res.json(booking);
+  }),
+);
 
 const updateBookingSchema = z.object({
   fromLocation: z.string().trim().min(2, 'Pickup location is required').max(500),
@@ -131,17 +154,17 @@ adminRouter.put(
   '/bookings/:id',
   asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
-    const existing = bookings.findById(id);
+    const existing = await bookings.findById(id);
     if (!existing) throw HttpError.notFound('Booking not found');
 
     const input = parseOrThrow(updateBookingSchema, req.body);
-    if (!vehicles.find(input.vehicleId)) {
+    if (!(await vehicles.find(input.vehicleId))) {
       throw HttpError.unprocessable('The given data was invalid', {
         vehicleId: 'Choose an available vehicle.',
       });
     }
 
-    const updated = bookings.update(id, {
+    const updated = await bookings.update(id, {
       fromLocation: input.fromLocation,
       toLocation: input.toLocation,
       departDate: input.departDate,
@@ -165,22 +188,21 @@ adminRouter.put(
 
 /* ---------------------------------------------------------------- fleet */
 
-adminRouter.get('/fleet', (_req, res) => {
-  const list = vehicles.all();
-  const usage = bookings.stats().byVehicle;
-  res.json(
-    list.map((vehicle) => ({
-      ...vehicle,
-      bookingCount: usage.find((entry) => entry.name === vehicle.name)?.count ?? 0,
-    })),
-  );
-});
+adminRouter.get(
+  '/fleet',
+  asyncHandler(async (_req, res) => {
+    res.json(await vehicles.withBookingCounts());
+  }),
+);
 
 /* ------------------------------------------------------------- messages */
 
-adminRouter.get('/contact-messages', (_req, res) => {
-  res.json(contactMessages.all());
-});
+adminRouter.get(
+  '/contact-messages',
+  asyncHandler(async (_req, res) => {
+    res.json(await contactMessages.all());
+  }),
+);
 
 const readSchema = z.object({ read: z.boolean().default(true) });
 
@@ -188,7 +210,7 @@ adminRouter.patch(
   '/contact-messages/:id',
   asyncHandler(async (req, res) => {
     const input = parseOrThrow(readSchema, req.body ?? {});
-    const message = contactMessages.markRead(Number(req.params.id), input.read);
+    const message = await contactMessages.markRead(Number(req.params.id), input.read);
     if (!message) throw HttpError.notFound('Message not found');
     res.json({ message: input.read ? 'Message marked as read.' : 'Message marked as unread.', contactMessage: message });
   }),
@@ -196,15 +218,18 @@ adminRouter.patch(
 
 /* ---------------------------------------------------------- subscribers */
 
-adminRouter.get('/subscribers', (_req, res) => {
-  res.json(subscribers.all());
-});
+adminRouter.get(
+  '/subscribers',
+  asyncHandler(async (_req, res) => {
+    res.json(await subscribers.all());
+  }),
+);
 
 adminRouter.patch(
   '/subscribers/:id',
   asyncHandler(async (req, res) => {
     const input = parseOrThrow(z.object({ active: z.boolean() }), req.body ?? {});
-    const subscriber = subscribers.setActive(Number(req.params.id), input.active);
+    const subscriber = await subscribers.setActive(Number(req.params.id), input.active);
     if (!subscriber) throw HttpError.notFound('Subscriber not found');
     res.json({ subscriber });
   }),
@@ -217,19 +242,24 @@ const promotionSchema = z.object({
   message: z.string().trim().min(10, 'Write your promotional message').max(10_000),
 });
 
-adminRouter.get('/promotions', (_req, res) => {
-  res.json({
-    promotions: promotions.recent(),
-    subscribers: subscribers.all(),
-    activeSubscribers: subscribers.activeCount(),
-  });
-});
+adminRouter.get(
+  '/promotions',
+  asyncHandler(async (_req, res) => {
+    const [promotionList, subscriberList, activeSubscribers] = await Promise.all([
+      promotions.recent(),
+      subscribers.all(),
+      subscribers.activeCount(),
+    ]);
+
+    res.json({ promotions: promotionList, subscribers: subscriberList, activeSubscribers });
+  }),
+);
 
 adminRouter.post(
   '/promotions',
   asyncHandler(async (req, res) => {
     const input = parseOrThrow(promotionSchema, req.body);
-    const recipients = subscribers.activeEmails();
+    const recipients = await subscribers.activeEmails();
 
     if (!recipients.length) {
       throw HttpError.unprocessable('There are no active subscribers to send to.');
@@ -250,7 +280,7 @@ adminRouter.post(
       (result) => result.status === 'fulfilled' && result.value.sent,
     ).length;
 
-    const promotion = promotions.create({
+    const promotion = await promotions.create({
       subject: input.subject,
       message: input.message,
       recipientCount: recipients.length,
@@ -258,9 +288,11 @@ adminRouter.post(
       status: sent === recipients.length ? 'sent' : sent === 0 ? 'queued' : 'partial',
     });
 
-    notifications.create('system', `Promotion "${input.subject}" processed for ${recipients.length} subscribers`, {
-      promotionId: promotion.id,
-    });
+    await notifications.create(
+      'system',
+      `Promotion "${input.subject}" processed for ${recipients.length} subscribers`,
+      { promotionId: promotion.id },
+    );
 
     res.status(201).json({
       message:
@@ -274,19 +306,28 @@ adminRouter.post(
 
 /* -------------------------------------------------------- notifications */
 
-adminRouter.get('/notifications', (req, res) => {
-  const limitParam = Number.parseInt(String(req.query.limit ?? ''), 10);
-  const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 100) : 25;
-  res.json({
-    notifications: notifications.recent(limit),
-    unreadCount: notifications.unreadCount(),
-  });
-});
+adminRouter.get(
+  '/notifications',
+  asyncHandler(async (req, res) => {
+    const limitParam = Number.parseInt(String(req.query.limit ?? ''), 10);
+    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 100) : 25;
 
-adminRouter.post('/notifications/mark-read', (_req, res) => {
-  notifications.markAllRead();
-  res.json({ unreadCount: 0 });
-});
+    const [recent, unreadCount] = await Promise.all([
+      notifications.recent(limit),
+      notifications.unreadCount(),
+    ]);
+
+    res.json({ notifications: recent, unreadCount });
+  }),
+);
+
+adminRouter.post(
+  '/notifications/mark-read',
+  asyncHandler(async (_req, res) => {
+    await notifications.markAllRead();
+    res.json({ unreadCount: 0 });
+  }),
+);
 
 /* ---------------------------------------------------------------- zones */
 
@@ -300,22 +341,25 @@ const zoneSchema = z.object({
   geometry: z.array(z.tuple([z.number(), z.number()])).min(3, 'A zone needs at least three points'),
 });
 
-adminRouter.get('/zones', (_req, res) => {
-  res.json(zones.all());
-});
+adminRouter.get(
+  '/zones',
+  asyncHandler(async (_req, res) => {
+    res.json(await zones.all());
+  }),
+);
 
 adminRouter.post(
   '/zones',
   asyncHandler(async (req, res) => {
     const input = parseOrThrow(zoneSchema, req.body);
-    res.status(201).json(zones.create(input));
+    res.status(201).json(await zones.create(input));
   }),
 );
 
 adminRouter.delete(
   '/zones/:id',
   asyncHandler(async (req, res) => {
-    const removed = zones.remove(Number(req.params.id));
+    const removed = await zones.remove(Number(req.params.id));
     if (!removed) throw HttpError.notFound('Zone not found');
     res.json({ message: 'Zone deleted' });
   }),

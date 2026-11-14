@@ -1,159 +1,123 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import Database, { type Database as SqliteDatabase } from 'better-sqlite3';
+import pg from 'pg';
 import { env } from '../env.js';
+import { SCHEMA_SQL } from './schema.js';
 
-fs.mkdirSync(path.dirname(env.databaseFile), { recursive: true });
+const { Pool, types } = pg;
 
-export const db: SqliteDatabase = new Database(env.databaseFile);
+/*
+ * node-postgres hands back `bigint`/`numeric` as strings and timestamps as
+ * `Date` objects. The API contract is plain numbers and ISO-8601 strings, so
+ * the conversion happens once here at the driver rather than in every mapper.
+ */
+types.setTypeParser(types.builtins.INT8, (value) => Number.parseInt(value, 10));
+types.setTypeParser(types.builtins.NUMERIC, (value) => Number.parseFloat(value));
+types.setTypeParser(types.builtins.TIMESTAMPTZ, (value) => new Date(value).toISOString());
+types.setTypeParser(types.builtins.TIMESTAMP, (value) => new Date(`${value}Z`).toISOString());
+/* Keep DATE as the raw `YYYY-MM-DD` string instead of a Date. */
+types.setTypeParser(types.builtins.DATE, (value) => value);
 
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+/** Neon and every other hosted Postgres needs TLS; a local server does not. */
+const requiresTls = !/@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(env.databaseUrl);
+
+export const pool = new Pool({
+  connectionString: env.databaseUrl,
+  max: env.databasePoolMax,
+  ssl: requiresTls ? { rejectUnauthorized: true } : undefined,
+  idleTimeoutMillis: 10_000,
+  connectionTimeoutMillis: 15_000,
+});
+
+pool.on('error', (error) => {
+  /* An idle client dropped by the pooler must not take the process down. */
+  console.error('[db] idle client error:', error.message);
+});
+
+export type SqlParams = unknown[] | Record<string, unknown>;
 
 /**
- * Schema mirrors the original Laravel migrations so existing data shapes stay
- * recognisable, with `created_at` / `updated_at` kept as ISO-8601 strings.
+ * Compiles the two placeholder styles used across the repositories into the
+ * `$1, $2, …` form Postgres expects:
+ *
+ *   query('… WHERE id = ?', [id])
+ *   query('… VALUES (@name, @email)', { name, email })
+ *
+ * A named parameter used more than once is bound once and reused.
  */
-export function migrate(): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS airports (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      code        TEXT    NOT NULL,
-      name        TEXT    NOT NULL,
-      city        TEXT    NOT NULL,
-      country     TEXT    NOT NULL DEFAULT 'United Kingdom',
-      description TEXT    NOT NULL DEFAULT '',
-      image       TEXT    NOT NULL DEFAULT '',
-      sort_order  INTEGER NOT NULL DEFAULT 0,
-      created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
-      updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
-    );
+export function compile(sql: string, params?: SqlParams): { text: string; values: unknown[] } {
+  if (!params) return { text: sql, values: [] };
 
-    CREATE TABLE IF NOT EXISTS vehicles (
-      id                INTEGER PRIMARY KEY AUTOINCREMENT,
-      name              TEXT    NOT NULL,
-      slug              TEXT    NOT NULL UNIQUE,
-      price             REAL    NOT NULL DEFAULT 0,
-      short_base        REAL    NOT NULL DEFAULT 0,
-      short_per_mile    REAL    NOT NULL DEFAULT 0,
-      long_base         REAL    NOT NULL DEFAULT 0,
-      long_per_mile     REAL    NOT NULL DEFAULT 0,
-      passengers        INTEGER NOT NULL DEFAULT 1,
-      suitcases         INTEGER NOT NULL DEFAULT 0,
-      hand_luggage_note TEXT,
-      image             TEXT    NOT NULL DEFAULT '',
-      description       TEXT,
-      car_model         TEXT,
-      sort_order        INTEGER NOT NULL DEFAULT 0,
-      created_at        TEXT    NOT NULL DEFAULT (datetime('now')),
-      updated_at        TEXT    NOT NULL DEFAULT (datetime('now'))
-    );
+  if (Array.isArray(params)) {
+    let index = 0;
+    return { text: sql.replace(/\?/g, () => `$${(index += 1)}`), values: [...params] };
+  }
 
-    CREATE TABLE IF NOT EXISTS faqs (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      question   TEXT    NOT NULL,
-      answer     TEXT    NOT NULL,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT    NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
-    );
+  const values: unknown[] = [];
+  const positions = new Map<string, number>();
 
-    CREATE TABLE IF NOT EXISTS bookings (
-      id             INTEGER PRIMARY KEY AUTOINCREMENT,
-      reference      TEXT    NOT NULL UNIQUE,
-      from_location  TEXT    NOT NULL,
-      to_location    TEXT    NOT NULL,
-      depart_date    TEXT    NOT NULL,
-      depart_time    TEXT,
-      vehicle_id     INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
-      passenger_name TEXT,
-      email          TEXT,
-      phone          TEXT,
-      country_code   TEXT,
-      flight_number  TEXT,
-      note_to_driver TEXT,
-      passengers     INTEGER NOT NULL DEFAULT 1,
-      suitcases      INTEGER NOT NULL DEFAULT 0,
-      hand_luggage   INTEGER NOT NULL DEFAULT 0,
-      extras         TEXT    NOT NULL DEFAULT '[]',
-      distance       TEXT,
-      duration       TEXT,
-      status         TEXT    NOT NULL DEFAULT 'pending',
-      payment_status TEXT    NOT NULL DEFAULT 'unpaid',
-      payment_id     TEXT,
-      total_price    REAL    NOT NULL DEFAULT 0,
-      created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
-      updated_at     TEXT    NOT NULL DEFAULT (datetime('now'))
-    );
+  const text = sql.replace(/@([A-Za-z_][A-Za-z0-9_]*)/g, (_match, name: string) => {
+    const existing = positions.get(name);
+    if (existing) return `$${existing}`;
 
-    CREATE INDEX IF NOT EXISTS bookings_status_idx       ON bookings(status);
-    CREATE INDEX IF NOT EXISTS bookings_payment_idx      ON bookings(payment_status);
-    CREATE INDEX IF NOT EXISTS bookings_created_at_idx   ON bookings(created_at);
+    if (!(name in params)) throw new Error(`Missing SQL parameter @${name}`);
+    values.push(params[name]);
+    positions.set(name, values.length);
+    return `$${values.length}`;
+  });
 
-    CREATE TABLE IF NOT EXISTS contact_messages (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      name       TEXT    NOT NULL,
-      email      TEXT    NOT NULL,
-      subject    TEXT,
-      message    TEXT    NOT NULL,
-      read       INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT    NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
-    );
+  return { text, values };
+}
 
-    CREATE TABLE IF NOT EXISTS subscribers (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      email      TEXT    NOT NULL UNIQUE,
-      name       TEXT,
-      active     INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT    NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
-    );
+export interface Queryable {
+  query<T>(sql: string, params?: SqlParams): Promise<T[]>;
+  one<T>(sql: string, params?: SqlParams): Promise<T | undefined>;
+  run(sql: string, params?: SqlParams): Promise<number>;
+}
 
-    CREATE TABLE IF NOT EXISTS admins (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      name       TEXT NOT NULL,
-      email      TEXT NOT NULL UNIQUE,
-      password   TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
+const bind = (executor: pg.Pool | pg.PoolClient): Queryable => ({
+  async query<T>(sql: string, params?: SqlParams): Promise<T[]> {
+    const { text, values } = compile(sql, params);
+    const result = await executor.query(text, values);
+    return result.rows as T[];
+  },
 
-    CREATE TABLE IF NOT EXISTS admin_notifications (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      type       TEXT    NOT NULL,
-      message    TEXT    NOT NULL,
-      data       TEXT,
-      read       INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT    NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
-    );
+  async one<T>(sql: string, params?: SqlParams): Promise<T | undefined> {
+    const { text, values } = compile(sql, params);
+    const result = await executor.query(text, values);
+    return result.rows[0] as T | undefined;
+  },
 
-    CREATE TABLE IF NOT EXISTS promotions (
-      id              INTEGER PRIMARY KEY AUTOINCREMENT,
-      subject         TEXT    NOT NULL,
-      message         TEXT    NOT NULL,
-      recipient_count INTEGER NOT NULL DEFAULT 0,
-      sent_count      INTEGER NOT NULL DEFAULT 0,
-      status          TEXT    NOT NULL DEFAULT 'queued',
-      created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
-      updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
-    );
+  async run(sql: string, params?: SqlParams): Promise<number> {
+    const { text, values } = compile(sql, params);
+    const result = await executor.query(text, values);
+    return result.rowCount ?? 0;
+  },
+});
 
-    CREATE TABLE IF NOT EXISTS zones (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      name       TEXT    NOT NULL,
-      colour     TEXT    NOT NULL DEFAULT '#f59e0b',
-      geometry   TEXT    NOT NULL,
-      created_at TEXT    NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
+export const db: Queryable = bind(pool);
+export const { query, one, run } = db;
+
+/** Runs `fn` inside a single transaction on one dedicated client. */
+export async function transaction<T>(fn: (tx: Queryable) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(bind(client));
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export const nowIso = (): string => new Date().toISOString();
 
-/** Run a set of statements inside a single transaction. */
-export function transaction<T>(fn: () => T): T {
-  return db.transaction(fn)();
+export async function closePool(): Promise<void> {
+  await pool.end();
+}
+
+export async function migrate(): Promise<void> {
+  await run(SCHEMA_SQL);
 }

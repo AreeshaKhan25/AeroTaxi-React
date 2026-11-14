@@ -17,35 +17,47 @@ catalogRouter.get('/config', (_req, res) => {
   });
 });
 
-catalogRouter.get('/airports', (req, res) => {
-  const query = typeof req.query.q === 'string' ? req.query.q : '';
-  const limitParam = Number.parseInt(String(req.query.limit ?? ''), 10);
-  const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 50) : undefined;
+catalogRouter.get(
+  '/airports',
+  asyncHandler(async (req, res) => {
+    const query = typeof req.query.q === 'string' ? req.query.q : '';
+    const limitParam = Number.parseInt(String(req.query.limit ?? ''), 10);
+    const limit = Number.isFinite(limitParam) ? Math.min(Math.max(limitParam, 1), 50) : undefined;
 
-  if (query || limit) {
-    res.json(airports.search(query, limit ?? 10));
-    return;
-  }
+    if (query || limit) {
+      res.json(await airports.search(query, limit ?? 10));
+      return;
+    }
 
-  res.json(airports.all());
-});
+    res.json(await airports.all());
+  }),
+);
 
-catalogRouter.get('/vehicles', (_req, res) => {
-  res.json(vehicles.all());
-});
+catalogRouter.get(
+  '/vehicles',
+  asyncHandler(async (_req, res) => {
+    res.json(await vehicles.all());
+  }),
+);
 
-catalogRouter.get('/vehicles/:id', (req, res) => {
-  const vehicle = vehicles.find(Number(req.params.id));
-  if (!vehicle) {
-    res.status(404).json({ message: 'Vehicle not found' });
-    return;
-  }
-  res.json(vehicle);
-});
+catalogRouter.get(
+  '/vehicles/:id',
+  asyncHandler(async (req, res) => {
+    const vehicle = await vehicles.find(Number(req.params.id));
+    if (!vehicle) {
+      res.status(404).json({ message: 'Vehicle not found' });
+      return;
+    }
+    res.json(vehicle);
+  }),
+);
 
-catalogRouter.get('/faqs', (_req, res) => {
-  res.json(faqs.all());
-});
+catalogRouter.get(
+  '/faqs',
+  asyncHandler(async (_req, res) => {
+    res.json(await faqs.all());
+  }),
+);
 
 /* ------------------------------------------------------- flight lookup */
 
