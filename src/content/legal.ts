@@ -387,7 +387,7 @@ export const PRIVACY_POLICY: LegalDocument = {
           items: [
             '**Transport Suppliers:** We share relevant booking details (name, pickup/drop-off locations, flight information, contact number) with the licensed transport supplier fulfilling your journey.',
             '**Payment Processors:** Payment data is shared with Stripe for secure transaction processing.',
-            '**Customer Support Tools:** We may use third-party platforms (e.g., Intercom) to manage customer communications.',
+            '**Customer Support Tools:** We may use third-party platforms (e.g., Tawk.to) to manage customer communications.',
             '**Analytics Providers:** We use analytics services (e.g., Google Analytics) to understand how visitors use our website.',
             '**Legal Requirements:** We may disclose your information if required to do so by law, regulation, legal process, or governmental request.',
           ],
@@ -535,7 +535,7 @@ export const PRIVACY_STATEMENT: LegalDocument = {
           items: [
             '**Transport Suppliers:** Licensed operators who fulfil your journey receive necessary booking details.',
             '**Stripe:** Our payment processor handles all transaction data securely.',
-            '**Intercom:** We use Intercom for live chat and customer support communications. Intercom may process your name, email, and conversation history to provide support services.',
+            '**Tawk.to:** We use Tawk.to for live chat and customer support communications. Tawk.to may process your name, email, and conversation history to provide support services.',
             '**Analytics Providers:** We use analytics tools to understand website usage patterns and improve our services.',
             '**Legal Authorities:** We may disclose data when required by law or to protect our legal rights.',
           ],
@@ -646,23 +646,24 @@ export const COOKIE_POLICY: LegalDocument = {
       ],
     },
     {
-      heading: 'Live Chat (Intercom) Cookies',
+      heading: 'Live Chat (Tawk.to) Cookies',
       blocks: [
         {
           type: 'p',
-          text: 'We use Intercom to provide live chat support on our website. Intercom sets its own cookies to enable the chat widget, track your conversation history, and provide a seamless support experience across sessions. These cookies may include:',
+          text: 'We use Tawk.to to provide live chat support on our website. Tawk.to sets its own cookies to enable the chat widget, keep your conversation history, and provide a seamless support experience across sessions. These cookies may include:',
         },
         {
           type: 'ul',
           items: [
-            '**intercom-id-*:** A unique identifier for the user, used to maintain your identity across chat sessions.',
-            '**intercom-session-*:** Tracks the current session to enable real-time messaging functionality.',
-            '**intercom-device-id-*:** Identifies your device for push notifications and session continuity.',
+            '**tawk_uuid_propertyId:** A visitor identifier that lets the chat recognise you across sessions. Essential; expires after six months.',
+            '**twk_idm_key:** Manages your connection to the chat widget. Essential; lasts for the session only.',
+            '**TawkConnectionTime:** Measures the connection time and keeps the widget working when our site is open in more than one tab. Lasts for the session only.',
+            'Tawk.to also keeps a **twk_token** entry in your browser local storage so your chat history is still available when you return.',
           ],
         },
         {
           type: 'p',
-          text: "For more information about how Intercom handles data, please visit [Intercom's Privacy Policy](https://www.intercom.com/legal/privacy).",
+          text: "For more information about how Tawk.to handles data, please visit [Tawk.to's Privacy Policy](https://www.tawk.to/privacy-policy/).",
         },
       ],
     },

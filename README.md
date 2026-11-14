@@ -115,6 +115,8 @@ failures come back as `422` with per-field messages, which the forms map onto th
   labelled controls, a skip link, focus-visible rings, loading skeletons, toasts for async
   results, and route-level code splitting.
 - **The legal pages** are stored as structured content in `src/content/legal.ts` and
-  rendered with a tiny inline-markup helper, so the wording stays easy to diff. The text is
-  carried over verbatim — including its references to Intercom as the live-chat provider,
-  although the site embeds Tawk.to. That is worth correcting with whoever owns the copy.
+  rendered with a tiny inline-markup helper, so the wording stays easy to diff. The text
+  follows the original, with one correction: the live-chat passages named Intercom while the
+  site actually embeds Tawk.to, so they now describe Tawk.to and the cookies it really sets
+  (`tawk_uuid_propertyId`, `twk_idm_key`, `TawkConnectionTime`), per tawk.to's own cookie
+  documentation.
