@@ -1,5 +1,5 @@
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
-import { ZodError, type ZodTypeAny, type z } from 'zod';
+import { ZodError, type ZodType, type ZodTypeDef } from 'zod';
 
 /** An error with an HTTP status attached, safe to surface to clients. */
 export class HttpError extends Error {
@@ -59,7 +59,10 @@ const flattenZod = (error: ZodError): Record<string, string> => {
 };
 
 /** Parse-or-throw helper that turns Zod failures into a 422 response. */
-export function parseOrThrow<S extends ZodTypeAny>(schema: S, payload: unknown): z.infer<S> {
+export function parseOrThrow<Output>(
+  schema: ZodType<Output, ZodTypeDef, unknown>,
+  payload: unknown,
+): Output {
   const result = schema.safeParse(payload);
   if (!result.success) {
     throw HttpError.unprocessable('The given data was invalid', flattenZod(result.error));

@@ -31,3 +31,6 @@ Thumbs.db
 # Tooling caches
 .tmp/
 *.tsbuildinfo
+
+.vercel
+.env*.local
