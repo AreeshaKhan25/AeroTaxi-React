@@ -15,7 +15,13 @@
   html,
   body {
     max-width: 100vw;
-    overflow-x: hidden;
+    /*
+     * `clip`, not `hidden`. `overflow-x: hidden` turns these into scroll
+     * containers, which silently breaks `position: sticky` on descendants —
+     * it was stopping the site header from sticking. `clip` suppresses the
+     * horizontal overflow without creating a scroll container.
+     */
+    overflow-x: clip;
   }
 
   body {
@@ -67,8 +73,21 @@
    * layers are decorative and sit behind everything via a negative z-index,
    * so they never intercept clicks.
    */
+  /*
+   * `isolate` is what lets the decorative ::before/::after sit at -z-10 —
+   * behind the content but still in front of the section's own background.
+   *
+   * No `overflow-hidden`: both layers are inset-0 so neither can overflow,
+   * and clipping here silently sliced off the date picker and location
+   * dropdowns, which open past the section's bottom edge.
+   *
+   * The explicit z-index matters because these sections are positioned: a
+   * later positioned sibling would otherwise paint over an open dropdown.
+   * The hero outranks the tinted sections below it, and both stay under the
+   * sticky header (z-50).
+   */
   .layer-aurora {
-    @apply relative isolate overflow-hidden;
+    @apply relative isolate z-10;
   }
 
   .layer-aurora::before {
@@ -93,7 +112,7 @@
 
   /* Softer variant for sections that already carry a tint. */
   .layer-tint {
-    @apply relative isolate overflow-hidden;
+    @apply relative isolate z-0;
   }
 
   .layer-tint::before {
