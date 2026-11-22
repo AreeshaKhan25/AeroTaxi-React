@@ -1,0 +1,25 @@
+{
+  "name": "AeroTAXI — UK Airport Transfers",
+  "short_name": "AeroTAXI",
+  "description": "Reliable, on-time UK airport taxi transfers with free flight tracking, meet & greet and 24/7 support.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F9F6F3",
+  "theme_color": "#0C6291",
+  "lang": "en-GB",
+  "categories": ["travel", "transportation"],
+  "icons": [
+    { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any" },
+    { "src": "/icon-192.png", "type": "image/png", "sizes": "192x192" },
+    { "src": "/icon-512.png", "type": "image/png", "sizes": "512x512" },
+    { "src": "/icon-512-maskable.png", "type": "image/png", "sizes": "512x512", "purpose": "maskable" },
+    { "src": "/apple-touch-icon.png", "type": "image/png", "sizes": "180x180" }
+  ],
+  "shortcuts": [
+    { "name": "Book a transfer", "url": "/booking" },
+    { "name": "Find my booking", "url": "/booking/lookup" }
+  ]
+}

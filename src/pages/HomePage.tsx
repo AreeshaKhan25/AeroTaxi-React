@@ -124,7 +124,7 @@ export default function HomePage() {
   return (
     <>
       {/* 1 — Hero + booking form */}
-      <section className="bg-white py-10 lg:py-16">
+      <section className="layer-aurora bg-white py-10 lg:py-16">
         <div className="container-narrow">
           <div className="grid grid-cols-1 items-center gap-10 lg:grid-cols-2">
             <div>
@@ -159,7 +159,7 @@ export default function HomePage() {
       </section>
 
       {/* 2 — Reasons to book */}
-      <section className="bg-lightgreen py-12 sm:py-16 lg:py-20">
+      <section className="layer-tint bg-lightgreen py-12 sm:py-16 lg:py-20">
         <div className="container-narrow">
           <h2 className="mb-8 text-center text-xl font-bold text-gray-900 text-balance sm:mb-14 sm:text-3xl lg:text-4xl">
             Reasons to book with AeroTAXI
@@ -237,7 +237,7 @@ export default function HomePage() {
       </section>
 
       {/* 4 — Airports we cover */}
-      <section className="bg-cream py-16">
+      <section className="layer-tint bg-cream py-16">
         <div className="container-page">
           {airports.isLoading ? (
             <div className="flex gap-5 overflow-hidden">

@@ -1,8 +1,16 @@
-import { Flag, MapPin } from 'lucide-react';
+import { Check, Flag, MapPin } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { DateTimePicker } from './DateTimePicker';
 import { LocationAutocomplete } from './LocationAutocomplete';
+
+/** What every fare covers — shown under the hero search button. */
+const INCLUDED = [
+  '24/7 customer support',
+  'Free cancellation up to 24h before',
+  'Free flight tracking',
+  'Child seats included free',
+] as const;
 
 export interface JourneySelection {
   from: string;
@@ -29,15 +37,20 @@ function SwapButton({
   compact: boolean;
 }) {
   return (
-    <div className={cn('relative z-20 flex justify-end pr-1', compact ? '-my-3' : '-my-4 pr-2')}>
+    <div className={cn('relative z-20 flex justify-end', compact ? '-my-3 pr-3' : '-my-5 pr-4')}>
       <button
         type="button"
         onClick={onClick}
         aria-label="Swap pickup and drop-off"
+        title="Swap pickup and drop-off"
         className={cn(
-          'flex items-center justify-center rounded-full bg-accent shadow-sm transition-all duration-300',
-          'hover:rotate-180 hover:scale-110 hover:bg-accent-500 active:scale-95',
-          compact ? 'h-8 w-8' : 'h-10 w-10',
+          /* A ring in the card colour punches the control out of the two
+             fields it straddles, so it reads as deliberate rather than
+             as a button that has slipped over the border. */
+          'flex items-center justify-center rounded-full bg-accent shadow-card ring-4 ring-cream',
+          'transition-transform duration-300 hover:rotate-180 hover:bg-accent-500 active:scale-95',
+          'motion-reduce:transition-none motion-reduce:hover:rotate-0',
+          compact ? 'h-8 w-8' : 'h-11 w-11',
         )}
       >
         <img
@@ -143,13 +156,14 @@ export function BookingSearchForm({
             {submitLabel}
           </Button>
           {!compact && (
-            <p className="text-xs leading-relaxed text-gray-500">
-              <span className="mr-1 text-green-600" aria-hidden>
-                ✓
-              </span>
-              24/7 customer support, cancellation before 24 hours, flight tracking and child seats
-              are included for free
-            </p>
+            <ul className="grid gap-x-5 gap-y-1.5 text-xs text-gray-600 sm:grid-cols-2">
+              {INCLUDED.map((item) => (
+                <li key={item} className="flex items-start gap-1.5">
+                  <Check className="mt-px h-3.5 w-3.5 shrink-0 text-green-600" aria-hidden />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       )}

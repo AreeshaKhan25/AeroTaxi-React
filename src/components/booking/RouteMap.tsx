@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import L from 'leaflet';
 import { MapContainer, Marker, Polyline, TileLayer, useMap } from 'react-leaflet';
-import { Loader2, MapPinned } from 'lucide-react';
+import { Loader2, MapPinned, TriangleAlert } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import type { RouteResult } from '@/types';
 
@@ -49,6 +49,10 @@ function MapViewport({ route }: { route: RouteResult | null }) {
 export interface RouteMapProps {
   route: RouteResult | null | undefined;
   loading?: boolean;
+  /** Set when the lookup failed even though both ends were filled in. */
+  error?: unknown;
+  /** Whether the journey actually has both ends entered. */
+  hasJourney?: boolean;
   heading?: string;
   height?: string;
   className?: string;
@@ -57,6 +61,8 @@ export interface RouteMapProps {
 export function RouteMap({
   route,
   loading = false,
+  error,
+  hasJourney = false,
   heading = 'Map view',
   height = 'h-52',
   className,
@@ -113,10 +119,20 @@ export function RouteMap({
         </MapContainer>
 
         {!route && !loading && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white/70">
-            <p className="flex items-center gap-2 text-xs font-medium text-gray-500">
-              <MapPinned className="h-4 w-4" aria-hidden /> Enter both locations to see the route
-            </p>
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white/75 px-6">
+            {error || hasJourney ? (
+              <p className="flex items-start gap-2 text-center text-xs font-medium text-amber-700">
+                <TriangleAlert className="mt-px h-4 w-4 shrink-0" aria-hidden />
+                <span>
+                  We couldn&rsquo;t place one of those locations on the map. Your price and booking
+                  are unaffected &mdash; try a nearby landmark or postcode for a route preview.
+                </span>
+              </p>
+            ) : (
+              <p className="flex items-center gap-2 text-xs font-medium text-gray-500">
+                <MapPinned className="h-4 w-4" aria-hidden /> Enter both locations to see the route
+              </p>
+            )}
           </div>
         )}
       </div>

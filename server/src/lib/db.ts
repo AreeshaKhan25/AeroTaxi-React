@@ -1,70 +1,73 @@
-import pg from 'pg';
+import { createClient, type Client, type InValue, type Transaction } from '@libsql/client';
 import { env } from '../env.js';
-import { SCHEMA_SQL } from './schema.js';
-
-const { Pool, types } = pg;
+import { MIGRATIONS } from './schema.js';
 
 /*
- * node-postgres hands back `bigint`/`numeric` as strings and timestamps as
- * `Date` objects. The API contract is plain numbers and ISO-8601 strings, so
- * the conversion happens once here at the driver rather than in every mapper.
+ * Turso (libSQL) over HTTP. The HTTP protocol is what makes this work on a
+ * serverless platform: there is no connection to keep warm between invocations,
+ * so a cold Vercel Function can issue a query immediately.
  */
-types.setTypeParser(types.builtins.INT8, (value) => Number.parseInt(value, 10));
-types.setTypeParser(types.builtins.NUMERIC, (value) => Number.parseFloat(value));
-types.setTypeParser(types.builtins.TIMESTAMPTZ, (value) => new Date(value).toISOString());
-types.setTypeParser(types.builtins.TIMESTAMP, (value) => new Date(`${value}Z`).toISOString());
-/* Keep DATE as the raw `YYYY-MM-DD` string instead of a Date. */
-types.setTypeParser(types.builtins.DATE, (value) => value);
-
-/** Neon and every other hosted Postgres needs TLS; a local server does not. */
-const requiresTls = !/@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(env.databaseUrl);
-
-export const pool = new Pool({
-  connectionString: env.databaseUrl,
-  max: env.databasePoolMax,
-  ssl: requiresTls ? { rejectUnauthorized: true } : undefined,
-  idleTimeoutMillis: 10_000,
-  connectionTimeoutMillis: 15_000,
-});
-
-pool.on('error', (error) => {
-  /* An idle client dropped by the pooler must not take the process down. */
-  console.error('[db] idle client error:', error.message);
+export const db: Client = createClient({
+  url: env.databaseUrl,
+  authToken: env.databaseAuthToken,
 });
 
 export type SqlParams = unknown[] | Record<string, unknown>;
 
 /**
- * Compiles the two placeholder styles used across the repositories into the
- * `$1, $2, …` form Postgres expects:
- *
- *   query('… WHERE id = ?', [id])
- *   query('… VALUES (@name, @email)', { name, email })
- *
- * A named parameter used more than once is bound once and reused.
+ * libSQL binds `?` positionally and `:name` by name, while the repositories are
+ * written against `?` and `@named`. Named parameters are rewritten to the colon
+ * form and the object is passed straight through; positional ones need no work.
  */
-export function compile(sql: string, params?: SqlParams): { text: string; values: unknown[] } {
+export function compile(
+  sql: string,
+  params?: SqlParams,
+): { text: string; values: InValue[] | Record<string, InValue> } {
   if (!params) return { text: sql, values: [] };
 
   if (Array.isArray(params)) {
-    let index = 0;
-    return { text: sql.replace(/\?/g, () => `$${(index += 1)}`), values: [...params] };
+    return { text: sql, values: params.map(toBindable) };
   }
 
-  const values: unknown[] = [];
-  const positions = new Map<string, number>();
-
+  const used = new Set<string>();
   const text = sql.replace(/@([A-Za-z_][A-Za-z0-9_]*)/g, (_match, name: string) => {
-    const existing = positions.get(name);
-    if (existing) return `$${existing}`;
-
     if (!(name in params)) throw new Error(`Missing SQL parameter @${name}`);
-    values.push(params[name]);
-    positions.set(name, values.length);
-    return `$${values.length}`;
+    used.add(name);
+    return `:${name}`;
   });
 
+  const values: Record<string, InValue> = {};
+  for (const name of used) values[name] = toBindable(params[name]);
+
   return { text, values };
+}
+
+/**
+ * SQLite stores no boolean type, and libSQL rejects `undefined` outright.
+ * Normalising here keeps every call site free of the conversion.
+ */
+function toBindable(value: unknown): InValue {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'number' || typeof value === 'bigint' || typeof value === 'string') {
+    return value;
+  }
+  if (value instanceof Uint8Array) return value;
+  return JSON.stringify(value);
+}
+
+/**
+ * Rows arrive with `bigint` for integer columns and `null` for missing values.
+ * Narrowing bigint to number here means the mappers and JSON responses see the
+ * plain numbers the API contract promises.
+ */
+function normaliseRow<T>(row: Record<string, unknown>): T {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    out[key] = typeof value === 'bigint' ? Number(value) : value;
+  }
+  return out as T;
 }
 
 export interface Queryable {
@@ -73,51 +76,66 @@ export interface Queryable {
   run(sql: string, params?: SqlParams): Promise<number>;
 }
 
-const bind = (executor: pg.Pool | pg.PoolClient): Queryable => ({
+const bind = (executor: Client | Transaction): Queryable => ({
   async query<T>(sql: string, params?: SqlParams): Promise<T[]> {
     const { text, values } = compile(sql, params);
-    const result = await executor.query(text, values);
-    return result.rows as T[];
+    const result = await executor.execute({ sql: text, args: values });
+    return result.rows.map((row) => normaliseRow<T>(row as unknown as Record<string, unknown>));
   },
 
   async one<T>(sql: string, params?: SqlParams): Promise<T | undefined> {
-    const { text, values } = compile(sql, params);
-    const result = await executor.query(text, values);
-    return result.rows[0] as T | undefined;
+    const rows = await bind(executor).query<T>(sql, params);
+    return rows[0];
   },
 
   async run(sql: string, params?: SqlParams): Promise<number> {
     const { text, values } = compile(sql, params);
-    const result = await executor.query(text, values);
-    return result.rowCount ?? 0;
+    const result = await executor.execute({ sql: text, args: values });
+    return Number(result.rowsAffected ?? 0);
   },
 });
 
-export const db: Queryable = bind(pool);
-export const { query, one, run } = db;
+const root = bind(db);
+export const query = root.query.bind(root);
+export const one = root.one.bind(root);
+export const run = root.run.bind(root);
 
-/** Runs `fn` inside a single transaction on one dedicated client. */
+/** Runs `fn` inside a single libSQL transaction. */
 export async function transaction<T>(fn: (tx: Queryable) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
+  const tx = await db.transaction('write');
   try {
-    await client.query('BEGIN');
-    const result = await fn(bind(client));
-    await client.query('COMMIT');
+    const result = await fn(bind(tx));
+    await tx.commit();
     return result;
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined);
+    await tx.rollback().catch(() => undefined);
     throw error;
   } finally {
-    client.release();
+    tx.close();
   }
 }
 
+/** SQLite has no timestamp type; the app stores ISO-8601 strings throughout. */
 export const nowIso = (): string => new Date().toISOString();
 
 export async function closePool(): Promise<void> {
-  await pool.end();
+  db.close();
 }
 
+/**
+ * Applies the schema. Every statement is additive and guarded, so running it
+ * against the existing database — which the mobile app also reads — adds only
+ * what is missing and never drops or rewrites a column.
+ */
 export async function migrate(): Promise<void> {
-  await run(SCHEMA_SQL);
+  for (const statement of MIGRATIONS) {
+    try {
+      await db.execute(statement);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      /* `ADD COLUMN` has no IF NOT EXISTS in SQLite; a repeat run is a no-op. */
+      if (/duplicate column name/i.test(message)) continue;
+      throw new Error(`Migration failed: ${message}\n  ${statement.trim().slice(0, 120)}`);
+    }
+  }
 }

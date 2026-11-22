@@ -81,7 +81,12 @@ export default function YourRidePage() {
 
               <BookingSearchForm variant="compact" value={journey} onChange={setJourney} />
 
-              <RouteMap route={route.data} loading={route.isFetching} />
+              <RouteMap
+                route={route.data}
+                loading={route.isFetching}
+                error={route.error}
+                hasJourney={Boolean(journey.from.trim() && journey.to.trim())}
+              />
 
               <RouteMetrics route={route.data} loading={route.isFetching} />
 

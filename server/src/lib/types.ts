@@ -1,5 +1,5 @@
 /**
- * Row shapes as stored in Postgres (snake_case) and the camelCase DTOs that
+ * Row shapes as stored in Turso/libSQL (snake_case) and the camelCase DTOs that
  * the API returns. Keeping the two separate means the database can keep the
  * original Laravel column names while the React app speaks idiomatic JS.
  */
@@ -80,7 +80,7 @@ export interface ContactMessageRow {
   email: string;
   subject: string | null;
   message: string;
-  read: boolean;
+  read: number | boolean; /* SQLite stores 0/1 */
   created_at: string;
   updated_at: string;
 }
@@ -89,7 +89,7 @@ export interface SubscriberRow {
   id: number;
   email: string;
   name: string | null;
-  active: boolean;
+  active: number | boolean; /* SQLite stores 0/1 */
   created_at: string;
   updated_at: string;
 }
@@ -108,7 +108,7 @@ export interface NotificationRow {
   type: string;
   message: string;
   data: string | null;
-  read: boolean;
+  read: number | boolean; /* SQLite stores 0/1 */
   created_at: string;
   updated_at: string;
 }

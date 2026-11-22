@@ -5,6 +5,7 @@ import AdminLayout, { RequireAdmin } from '@/components/admin/AdminLayout';
 import { SiteLayout } from '@/components/layout/SiteLayout';
 import { ToastProvider } from '@/components/ui/Toast';
 import { AdminAuthProvider } from '@/hooks/useAdminAuth';
+import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import {
   COOKIE_POLICY,
   PRIVACY_POLICY,
@@ -65,75 +66,77 @@ function RouteFallback() {
 
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <ToastProvider>
-        <BrowserRouter>
-          <Suspense fallback={<RouteFallback />}>
-            <Routes>
-              {/* Public site */}
-              <Route element={<SiteLayout />}>
-                <Route path={ROUTES.home} element={<HomePage />} />
-                <Route path={ROUTES.coverage} element={<CoveragePage />} />
-                <Route path={ROUTES.help} element={<HelpPage />} />
-                <Route path={ROUTES.yourRide} element={<YourRidePage />} />
-                <Route path={ROUTES.transferDetails} element={<TransferDetailsPage />} />
-                <Route path={ROUTES.payment} element={<PaymentPage />} />
-                <Route path="/booking/confirmation/:reference" element={<ConfirmationPage />} />
-                <Route path={ROUTES.lookup} element={<BookingLookupPage />} />
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <BrowserRouter>
+            <Suspense fallback={<RouteFallback />}>
+              <Routes>
+                {/* Public site */}
+                <Route element={<SiteLayout />}>
+                  <Route path={ROUTES.home} element={<HomePage />} />
+                  <Route path={ROUTES.coverage} element={<CoveragePage />} />
+                  <Route path={ROUTES.help} element={<HelpPage />} />
+                  <Route path={ROUTES.yourRide} element={<YourRidePage />} />
+                  <Route path={ROUTES.transferDetails} element={<TransferDetailsPage />} />
+                  <Route path={ROUTES.payment} element={<PaymentPage />} />
+                  <Route path="/booking/confirmation/:reference" element={<ConfirmationPage />} />
+                  <Route path={ROUTES.lookup} element={<BookingLookupPage />} />
 
-                <Route
-                  path={ROUTES.terms}
-                  element={<LegalDocumentPage doc={TERMS_OF_SERVICE} />}
-                />
-                <Route
-                  path={ROUTES.privacyPolicy}
-                  element={<LegalDocumentPage doc={PRIVACY_POLICY} />}
-                />
-                <Route
-                  path={ROUTES.privacyStatement}
-                  element={<LegalDocumentPage doc={PRIVACY_STATEMENT} />}
-                />
-                <Route
-                  path={ROUTES.cookiePolicy}
-                  element={<LegalDocumentPage doc={COOKIE_POLICY} />}
-                />
+                  <Route
+                    path={ROUTES.terms}
+                    element={<LegalDocumentPage doc={TERMS_OF_SERVICE} />}
+                  />
+                  <Route
+                    path={ROUTES.privacyPolicy}
+                    element={<LegalDocumentPage doc={PRIVACY_POLICY} />}
+                  />
+                  <Route
+                    path={ROUTES.privacyStatement}
+                    element={<LegalDocumentPage doc={PRIVACY_STATEMENT} />}
+                  />
+                  <Route
+                    path={ROUTES.cookiePolicy}
+                    element={<LegalDocumentPage doc={COOKIE_POLICY} />}
+                  />
 
-                <Route path="*" element={<NotFoundPage />} />
-              </Route>
+                  <Route path="*" element={<NotFoundPage />} />
+                </Route>
 
-              {/* Admin panel */}
-              <Route
-                path={ROUTES.admin.login}
-                element={
-                  <AdminAuthProvider>
-                    <AdminLoginPage />
-                  </AdminAuthProvider>
-                }
-              />
-              <Route
-                path="/admin"
-                element={
-                  <AdminAuthProvider>
-                    <RequireAdmin>
-                      <AdminLayout />
-                    </RequireAdmin>
-                  </AdminAuthProvider>
-                }
-              >
-                <Route index element={<AdminDashboardPage />} />
-                <Route path="jobs" element={<AdminJobsPage />} />
-                <Route path="bookings" element={<AdminUnpaidPage />} />
-                <Route path="bookings/:id" element={<AdminBookingDetailPage />} />
-                <Route path="fleet" element={<AdminFleetPage />} />
-                <Route path="zones-map" element={<AdminZonesPage />} />
-                <Route path="contact-messages" element={<AdminMessagesPage />} />
-                <Route path="promotions" element={<AdminPromotionsPage />} />
-                <Route path="subscribers" element={<AdminSubscribersPage />} />
-              </Route>
-            </Routes>
-          </Suspense>
-        </BrowserRouter>
-      </ToastProvider>
-    </QueryClientProvider>
+                {/* Admin panel */}
+                <Route
+                  path={ROUTES.admin.login}
+                  element={
+                    <AdminAuthProvider>
+                      <AdminLoginPage />
+                    </AdminAuthProvider>
+                  }
+                />
+                <Route
+                  path="/admin"
+                  element={
+                    <AdminAuthProvider>
+                      <RequireAdmin>
+                        <AdminLayout />
+                      </RequireAdmin>
+                    </AdminAuthProvider>
+                  }
+                >
+                  <Route index element={<AdminDashboardPage />} />
+                  <Route path="jobs" element={<AdminJobsPage />} />
+                  <Route path="bookings" element={<AdminUnpaidPage />} />
+                  <Route path="bookings/:id" element={<AdminBookingDetailPage />} />
+                  <Route path="fleet" element={<AdminFleetPage />} />
+                  <Route path="zones-map" element={<AdminZonesPage />} />
+                  <Route path="contact-messages" element={<AdminMessagesPage />} />
+                  <Route path="promotions" element={<AdminPromotionsPage />} />
+                  <Route path="subscribers" element={<AdminSubscribersPage />} />
+                </Route>
+              </Routes>
+            </Suspense>
+          </BrowserRouter>
+        </ToastProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }

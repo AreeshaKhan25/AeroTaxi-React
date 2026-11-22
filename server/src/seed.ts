@@ -137,12 +137,24 @@ export async function bootstrapDatabase(options: { verbose?: boolean } = {}): Pr
   }
 }
 
+/**
+ * SQLite has no TRUNCATE; DELETE plus resetting the AUTOINCREMENT counter in
+ * `sqlite_sequence` is the equivalent. Bookings, messages and subscribers are
+ * never touched — this only clears the reference tables the seed owns.
+ */
+async function resetTable(table: string): Promise<void> {
+  await run(`DELETE FROM ${table}`);
+  await run('DELETE FROM sqlite_sequence WHERE name = ?', [table]);
+}
+
 async function freshReferenceData(): Promise<void> {
-  await run('TRUNCATE airports, faqs RESTART IDENTITY');
+  await resetTable('airports');
+  await resetTable('faqs');
+
   /* Bookings reference vehicles, so only clear the fleet when nothing uses it. */
   const bookingCount = await count('bookings');
   if (bookingCount === 0) {
-    await run('TRUNCATE vehicles RESTART IDENTITY CASCADE');
+    await resetTable('vehicles');
     console.log('[db] cleared airports, vehicles and faqs');
   } else {
     console.log(

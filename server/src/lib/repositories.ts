@@ -74,9 +74,9 @@ export const airports = {
     const like = `%${trimmed}%`;
     const rows = await query<AirportRow>(
       `SELECT * FROM airports
-        WHERE name ILIKE ?
-           OR code ILIKE ?
-           OR city ILIKE ?
+        WHERE name LIKE ?
+           OR code LIKE ?
+           OR city LIKE ?
         ORDER BY sort_order ASC
         LIMIT ?`,
       [like, like, like, limit],
@@ -166,15 +166,34 @@ export interface UpdateBookingInput {
 }
 
 /** A booking row with its vehicle joined in as JSON, avoiding an N+1 query. */
-type JoinedBookingRow = BookingRow & { vehicle: VehicleRow | null };
+type JoinedBookingRow = BookingRow & { vehicle: VehicleRow | string | null };
+
+/*
+ * The vehicle is folded into each booking row as a JSON string, so a list of
+ * bookings costs one query rather than one per row. SQLite's json_object()
+ * needs the columns spelled out, unlike Postgres' to_jsonb(v).
+ */
+const VEHICLE_JSON = `json_object(
+  'id', v.id, 'name', v.name, 'slug', v.slug, 'price', v.price,
+  'short_base', v.short_base, 'short_per_mile', v.short_per_mile,
+  'long_base', v.long_base, 'long_per_mile', v.long_per_mile,
+  'passengers', v.passengers, 'suitcases', v.suitcases,
+  'hand_luggage_note', v.hand_luggage_note, 'image', v.image,
+  'description', v.description, 'car_model', v.car_model,
+  'sort_order', v.sort_order, 'created_at', v.created_at, 'updated_at', v.updated_at
+)`;
 
 const SELECT_BOOKING = `
-  SELECT b.*, to_jsonb(v) AS vehicle
+  SELECT b.*, CASE WHEN v.id IS NULL THEN NULL ELSE ${VEHICLE_JSON} END AS vehicle
     FROM bookings b
     LEFT JOIN vehicles v ON v.id = b.vehicle_id
 `;
 
-const mapJoined = (row: JoinedBookingRow): BookingDto => toBooking(row, row.vehicle);
+const mapJoined = (row: JoinedBookingRow): BookingDto => {
+  /* json_object() hands back a string; Postgres' to_jsonb() handed back an object. */
+  const vehicle = typeof row.vehicle === 'string' ? (JSON.parse(row.vehicle) as VehicleRow) : row.vehicle;
+  return toBooking(row, vehicle);
+};
 
 export const bookings = {
   async create(input: CreateBookingInput): Promise<BookingDto> {
@@ -310,8 +329,8 @@ export const bookings = {
       }>(
         `SELECT COUNT(*)                                                               AS total,
                 COALESCE(SUM(CASE WHEN payment_status = 'paid' THEN total_price END), 0) AS revenue,
-                COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE)                AS today,
-                COUNT(*) FILTER (WHERE status = 'pending')                             AS pending
+                SUM(CASE WHEN date(created_at) = date('now') THEN 1 ELSE 0 END)        AS today,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END)                    AS pending
            FROM bookings`,
       ),
 
@@ -331,11 +350,11 @@ export const bookings = {
       ),
 
       query<{ day: string; bookings: number; revenue: number }>(
-        `SELECT to_char(created_at, 'YYYY-MM-DD') AS day,
+        `SELECT strftime('%Y-%m-%d', created_at) AS day,
                 COUNT(*) AS bookings,
                 COALESCE(SUM(CASE WHEN payment_status = 'paid' THEN total_price ELSE 0 END), 0) AS revenue
            FROM bookings
-          WHERE created_at >= CURRENT_DATE - INTERVAL '29 days'
+          WHERE date(created_at) >= date('now', '-29 days')
           GROUP BY 1
           ORDER BY 1 ASC`,
       ),
@@ -365,7 +384,7 @@ export const contactMessages = {
     const timestamp = nowIso();
     const row = await one<ContactMessageRow>(
       `INSERT INTO contact_messages (name, email, subject, message, read, created_at, updated_at)
-       VALUES (@name, @email, @subject, @message, false, @timestamp, @timestamp)
+       VALUES (@name, @email, @subject, @message, 0, @timestamp, @timestamp)
        RETURNING *`,
       { ...input, timestamp },
     );
@@ -390,7 +409,7 @@ export const contactMessages = {
 
   async unreadCount(): Promise<number> {
     const row = await one<{ c: number }>(
-      'SELECT COUNT(*) AS c FROM contact_messages WHERE read = false',
+      'SELECT COUNT(*) AS c FROM contact_messages WHERE read = 0',
     );
     return Number(row?.c ?? 0);
   },
@@ -406,7 +425,7 @@ export const subscribers = {
 
   async activeCount(): Promise<number> {
     const row = await one<{ c: number }>(
-      'SELECT COUNT(*) AS c FROM subscribers WHERE active = true',
+      'SELECT COUNT(*) AS c FROM subscribers WHERE active = 1',
     );
     return Number(row?.c ?? 0);
   },
@@ -425,19 +444,25 @@ export const subscribers = {
       return { subscriber: toSubscriber(existing), created: false };
     }
 
+    /*
+     * The SELECT above already settled whether this address is new, so the
+     * insert only has to survive a race with a concurrent sign-up. SQLite has
+     * no xmax to report which branch ON CONFLICT took, so the conflict path
+     * re-reads the row instead.
+     */
     const timestamp = nowIso();
     const row = await one<SubscriberRow>(
       `INSERT INTO subscribers (email, name, active, created_at, updated_at)
-       VALUES (?, ?, true, ?, ?)
-       ON CONFLICT (email) DO UPDATE SET updated_at = EXCLUDED.updated_at
-       RETURNING *, (xmax = 0) AS inserted`,
+       VALUES (?, ?, 1, ?, ?)
+       ON CONFLICT (email) DO UPDATE SET updated_at = excluded.updated_at
+       RETURNING *`,
       [email, name, timestamp, timestamp],
     );
 
     if (!row) throw new Error('Subscriber could not be saved');
 
-    const created = (row as SubscriberRow & { inserted?: boolean }).inserted !== false;
-    return { subscriber: toSubscriber(row), created };
+    /* Created only if the stored created_at is the one this call just wrote. */
+    return { subscriber: toSubscriber(row), created: row.created_at === timestamp };
   },
 
   async setActive(id: number, active: boolean): Promise<SubscriberDto | undefined> {
@@ -450,7 +475,7 @@ export const subscribers = {
 
   activeEmails(): Promise<{ email: string; name: string | null }[]> {
     return query<{ email: string; name: string | null }>(
-      'SELECT email, name FROM subscribers WHERE active = true',
+      'SELECT email, name FROM subscribers WHERE active = 1',
     );
   },
 };
@@ -493,7 +518,7 @@ export const notifications = {
     const timestamp = nowIso();
     const row = await one<NotificationRow>(
       `INSERT INTO admin_notifications (type, message, data, read, created_at, updated_at)
-       VALUES (?, ?, ?, false, ?, ?)
+       VALUES (?, ?, ?, 0, ?, ?)
        RETURNING *`,
       [type, message, data === undefined ? null : JSON.stringify(data), timestamp, timestamp],
     );
@@ -511,13 +536,13 @@ export const notifications = {
 
   async unreadCount(): Promise<number> {
     const row = await one<{ c: number }>(
-      'SELECT COUNT(*) AS c FROM admin_notifications WHERE read = false',
+      'SELECT COUNT(*) AS c FROM admin_notifications WHERE read = 0',
     );
     return Number(row?.c ?? 0);
   },
 
   async markAllRead(): Promise<void> {
-    await run('UPDATE admin_notifications SET read = true, updated_at = ? WHERE read = false', [
+    await run('UPDATE admin_notifications SET read = 1, updated_at = ? WHERE read = 0', [
       nowIso(),
     ]);
   },

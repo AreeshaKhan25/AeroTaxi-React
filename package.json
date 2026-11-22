@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "AeroTAXI - UK airport transfers. React + TypeScript front end with an Express/SQLite API.",
+  "description": "Production-grade UK airport-transfer booking platform: React 18 + TypeScript front end, Express API, Turso (libSQL), Stripe payments and a full admin back office.",
   "engines": {
     "node": ">=20.11"
   },
@@ -11,16 +11,18 @@
     "dev": "concurrently -n web,api -c cyan,magenta \"npm:dev:web\" \"npm:dev:api\"",
     "dev:web": "vite",
     "dev:api": "tsx watch server/src/index.ts",
-    "build": "tsc -b && vite build",
+    "build": "node scripts/generate-sitemap.mjs && tsc -b && vite build",
     "preview": "vite preview",
     "start": "cross-env NODE_ENV=production tsx server/src/index.ts",
     "db:seed": "tsx server/src/seed.ts",
     "db:reset": "tsx server/src/seed.ts --fresh",
     "typecheck": "tsc -b --noEmit false --emitDeclarationOnly false",
-    "lint": "tsc -b"
+    "lint": "tsc -b",
+    "icons": "python scripts/generate-icons.py"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
+    "@libsql/client": "^0.14.0",
     "@stripe/react-stripe-js": "^2.8.1",
     "@stripe/stripe-js": "^4.9.0",
     "@tanstack/react-query": "^5.59.16",
@@ -36,7 +38,6 @@
     "leaflet": "^1.9.4",
     "lucide-react": "^0.454.0",
     "nodemailer": "^6.9.16",
-    "pg": "^8.13.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.53.1",
@@ -55,7 +56,6 @@
     "@types/leaflet": "^1.9.14",
     "@types/node": "^22.8.6",
     "@types/nodemailer": "^6.4.16",
-    "@types/pg": "^8.11.10",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
@@ -67,5 +67,24 @@
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "vite": "^5.4.10"
-  }
+  },
+  "license": "MIT",
+  "homepage": "https://aerotaxi-uk.vercel.app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AreeshaKhan25/AeroTaxi-React.git"
+  },
+  "keywords": [
+    "react",
+    "typescript",
+    "vite",
+    "express",
+    "turso",
+    "libsql",
+    "stripe",
+    "tailwindcss",
+    "booking-system",
+    "airport-transfers",
+    "vercel"
+  ]
 }

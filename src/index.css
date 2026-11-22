@@ -30,6 +30,26 @@
   ::selection {
     @apply bg-accent/40 text-ink;
   }
+
+  /*
+   * Respect the OS "reduce motion" setting. The site leans on entrance
+   * animations, hover transforms and smooth scrolling, all of which can
+   * trigger nausea or migraine for motion-sensitive visitors.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }
 
 @layer components {
@@ -39,6 +59,49 @@
 
   .container-narrow {
     @apply mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8;
+  }
+
+  /*
+   * Layered section backgrounds. Two soft brand-coloured glows plus a faint
+   * grid give flat sections depth without competing with the content. Both
+   * layers are decorative and sit behind everything via a negative z-index,
+   * so they never intercept clicks.
+   */
+  .layer-aurora {
+    @apply relative isolate overflow-hidden;
+  }
+
+  .layer-aurora::before {
+    content: '';
+    @apply pointer-events-none absolute inset-0 -z-10;
+    background:
+      radial-gradient(42rem 28rem at 12% -10%, rgba(12, 98, 145, 0.10), transparent 70%),
+      radial-gradient(34rem 24rem at 92% 8%, rgba(250, 204, 21, 0.16), transparent 72%);
+  }
+
+  .layer-aurora::after {
+    content: '';
+    @apply pointer-events-none absolute inset-0 -z-10 opacity-[0.35];
+    background-image:
+      linear-gradient(to right, rgba(17, 24, 39, 0.045) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(17, 24, 39, 0.045) 1px, transparent 1px);
+    background-size: 56px 56px;
+    /* Fade the grid out towards the edges so it reads as texture, not a table. */
+    mask-image: radial-gradient(70% 60% at 50% 40%, #000 35%, transparent 100%);
+    -webkit-mask-image: radial-gradient(70% 60% at 50% 40%, #000 35%, transparent 100%);
+  }
+
+  /* Softer variant for sections that already carry a tint. */
+  .layer-tint {
+    @apply relative isolate overflow-hidden;
+  }
+
+  .layer-tint::before {
+    content: '';
+    @apply pointer-events-none absolute inset-0 -z-10;
+    background:
+      radial-gradient(40rem 20rem at 85% 0%, rgba(255, 255, 255, 0.75), transparent 68%),
+      radial-gradient(30rem 22rem at 5% 100%, rgba(12, 98, 145, 0.09), transparent 70%);
   }
 
   .field {

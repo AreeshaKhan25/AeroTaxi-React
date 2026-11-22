@@ -246,7 +246,13 @@ export default function TransferDetailsPage() {
                 time={params.time}
               />
 
-              <RouteMap route={route.data} loading={route.isFetching} height="h-44" />
+              <RouteMap
+                route={route.data}
+                loading={route.isFetching}
+                error={route.error}
+                hasJourney={Boolean(params.from?.trim() && params.to?.trim())}
+                height="h-44"
+              />
 
               <RouteMetrics
                 route={route.data}

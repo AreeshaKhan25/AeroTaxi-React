@@ -16,6 +16,17 @@ const int = (value: string | undefined, fallback: number): number => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+/**
+ * The Turso dashboard gives a `https://<db>.turso.io/v2/pipeline` URL, but the
+ * client wants the bare origin and appends the protocol path itself. Passing
+ * the full pipeline URL through makes every request 404.
+ */
+function normaliseLibsqlUrl(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, '');
+  if (trimmed.startsWith('file:')) return trimmed;
+  return trimmed.replace(/\/v2\/pipeline$/, '');
+}
+
 const list = (value: string | undefined, fallback: string[] = []): string[] => {
   if (!value) return fallback;
   return value
@@ -34,16 +45,23 @@ export const env = {
   appUrl: (process.env.APP_URL ?? 'http://localhost:5173').replace(/\/+$/, ''),
   corsOrigins: list(process.env.CORS_ORIGIN, ['http://localhost:5173', 'http://127.0.0.1:5173']),
 
-  /* Postgres connection string. Vercel injects DATABASE_URL for its Neon
-     integration; POSTGRES_URL is accepted as an alias. */
-  databaseUrl:
-    process.env.DATABASE_URL ??
-    process.env.POSTGRES_URL ??
-    'postgresql://postgres:postgres@localhost:5432/aerotaxi',
+  /*
+   * Turso (libSQL). The same database backs the mobile client, so this is the
+   * shared source of truth rather than a copy.
+   *
+   * TURSO_DATABASE_URL is the canonical name; TURSO_HTTP_URL is accepted
+   * because that is what the Turso dashboard hands you, and its `/v2/pipeline`
+   * suffix is trimmed since the client appends its own path. A local
+   * `file:` URL still works for offline development.
+   */
+  databaseUrl: normaliseLibsqlUrl(
+    process.env.TURSO_DATABASE_URL ??
+      process.env.TURSO_HTTP_URL ??
+      process.env.DATABASE_URL ??
+      'file:server/data/aerotaxi.db',
+  ),
 
-  /* Serverless instances should hold one connection each; a long-lived
-     server can keep a small pool. */
-  databasePoolMax: int(process.env.DATABASE_POOL_MAX, process.env.VERCEL ? 1 : 5),
+  databaseAuthToken: process.env.TURSO_AUTH_TOKEN ?? undefined,
 
   isServerless: Boolean(process.env.VERCEL),
 
